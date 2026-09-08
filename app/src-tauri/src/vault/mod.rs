@@ -134,6 +134,12 @@ impl Vault {
         Ok(())
     }
 
+    /// 二次验证：校验访问密码是否正确（不改变解锁状态）。用于查看机密前的重认证。
+    pub fn verify_password(&self, password: &str) -> Result<()> {
+        envelope::unwrap_with_password(&self.header.envelopes.password, password, &self.header.kdf)
+            .map(|_| ())
+    }
+
     /// 锁定：清零 MK。
     pub fn lock(&mut self) {
         self.mk = None; // MasterKey 的 Drop 会 zeroize

@@ -5,9 +5,11 @@ pub mod commands;
 pub mod error;
 pub mod importer;
 pub mod model;
+pub mod platform;
 pub mod ssh;
 pub mod store;
 pub mod sys;
+pub mod util;
 pub mod vault;
 
 use commands::AppState;
@@ -34,6 +36,11 @@ pub fn run() {
             commands::assets::import_key,
             commands::assets::import_key_from_path,
             commands::assets::test_connection,
+            commands::write::generate_key,
+            commands::write::preview_config,
+            commands::write::apply_config,
+            commands::write::create_identity,
+            commands::write::reveal_key_passphrase,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

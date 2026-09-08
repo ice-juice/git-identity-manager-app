@@ -3,6 +3,7 @@
 
 pub mod assets;
 pub mod vault;
+pub mod write;
 
 use crate::app_config::AppConfig;
 use crate::vault::Vault;

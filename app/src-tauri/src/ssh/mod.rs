@@ -3,4 +3,6 @@
 pub mod config;
 pub mod connect;
 pub mod key;
+pub mod keygen;
+pub mod managed;
 pub mod toolchain;
