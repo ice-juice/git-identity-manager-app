@@ -36,3 +36,7 @@ base64 = "0.22"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 time = { version = "0.3", features = ["formatting"] }
+
+# ---- M2 SSH 资产读取/导入 ----
+ssh-key = { version = "0.6", features = ["ed25519", "rsa", "encryption", "std", "getrandom"] }
+rand_core = { version = "0.6", features = ["std", "getrandom"] }

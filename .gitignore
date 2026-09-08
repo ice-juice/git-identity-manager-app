@@ -21,5 +21,5 @@ Thumbs.db
 .idea/
 .vscode/
 
-# 设计稿临时服务器无需忽略；截图 PNG 保留
-docs/design/_serve.mjs
+# docs 是独立 git 仓库（自管理），主仓库不追踪，避免嵌入 gitlink
+/docs/

@@ -1,6 +1,7 @@
 //! IPC 命令层：薄封装，仅做参数校验 + 编排 + 结果映射。
 //! **绝不在此写机密逻辑，绝不把私钥/口令/MK 传回前端。**
 
+pub mod assets;
 pub mod vault;
 
 use crate::app_config::AppConfig;
