@@ -1,5 +1,6 @@
 //! Tauri 应用入口：注册状态与命令。
 
+pub mod agent;
 pub mod app_config;
 pub mod commands;
 pub mod error;
@@ -41,6 +42,13 @@ pub fn run() {
             commands::write::apply_config,
             commands::write::create_identity,
             commands::write::reveal_key_passphrase,
+            commands::agent::agent_status,
+            commands::agent::agent_ensure,
+            commands::agent::agent_load,
+            commands::agent::agent_load_identity,
+            commands::agent::agent_load_all,
+            commands::agent::agent_unload,
+            commands::agent::agent_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

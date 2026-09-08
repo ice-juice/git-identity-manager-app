@@ -1,6 +1,7 @@
 //! IPC 命令层：薄封装，仅做参数校验 + 编排 + 结果映射。
 //! **绝不在此写机密逻辑，绝不把私钥/口令/MK 传回前端。**
 
+pub mod agent;
 pub mod assets;
 pub mod vault;
 pub mod write;
@@ -55,6 +56,8 @@ pub struct AppState {
     pub vault: Mutex<Option<Vault>>,
     pub config: Mutex<AppConfig>,
     pub unlock_guard: Mutex<UnlockGuard>,
+    /// 免提权 fallback 启动的 agent 环境（sock/pid）。
+    pub agent_env: Mutex<crate::agent::AgentEnv>,
 }
 
 impl AppState {
@@ -63,6 +66,7 @@ impl AppState {
             vault: Mutex::new(None),
             config: Mutex::new(AppConfig::load()),
             unlock_guard: Mutex::new(UnlockGuard::default()),
+            agent_env: Mutex::new(crate::agent::AgentEnv::default()),
         }
     }
 }

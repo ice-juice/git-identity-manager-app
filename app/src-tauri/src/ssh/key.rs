@@ -3,7 +3,8 @@
 
 use crate::error::{AppError, Result};
 use serde::Serialize;
-use ssh_key::{Algorithm, HashAlg, PrivateKey, PublicKey};
+use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey, PublicKey};
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -128,6 +129,23 @@ pub fn verify_passphrase(private_openssh: &str, passphrase: &str) -> Result<()> 
         .map_err(|_| AppError::BadPassword)
 }
 
+/// 解密私钥为**不带口令**的 OpenSSH 文本，用于 `ssh-add -` 从 stdin 加载
+/// （严格模式：私钥明文全程不落盘）。返回值 Drop 时清零。
+pub fn decrypt_to_openssh(private_openssh: &str, passphrase: Option<&str>) -> Result<Zeroizing<String>> {
+    let sk = PrivateKey::from_openssh(private_openssh)
+        .map_err(|e| AppError::Invalid(format!("私钥解析失败：{e}")))?;
+    let decrypted = if sk.is_encrypted() {
+        let pw = passphrase.ok_or_else(|| AppError::Invalid("该私钥带口令，需提供口令".into()))?;
+        sk.decrypt(pw).map_err(|_| AppError::BadPassword)?
+    } else {
+        sk
+    };
+    let text = decrypted
+        .to_openssh(LineEnding::LF)
+        .map_err(|_| AppError::Crypto)?;
+    Ok(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +206,36 @@ mod tests {
         let b_pub = b.public_key().to_openssh().unwrap();
         assert!(pair_matches(&a_priv, &a_pub).unwrap(), "同一对应匹配");
         assert!(!pair_matches(&a_priv, &b_pub).unwrap(), "张冠李戴应不匹配");
+    }
+
+    #[test]
+    fn decrypt_yields_unencrypted_key_matching_public() {
+        let sk = gen_ed25519();
+        let orig_pub = sk.public_key().to_openssh().unwrap();
+        let enc = sk.encrypt(&mut rand_core::OsRng, "pw123").unwrap();
+        let enc_txt = enc.to_openssh(LineEnding::LF).unwrap();
+
+        // 正确口令 → 解出不带口令的私钥，公钥不变。
+        let plain = decrypt_to_openssh(&enc_txt, Some("pw123")).unwrap();
+        let info = parse_private_openssh(&plain).unwrap();
+        assert_eq!(info.encrypted, Some(false), "解密后应为不带口令");
+        assert!(pair_matches(&plain, &orig_pub).unwrap());
+
+        // 错误口令报错。
+        assert_eq!(
+            decrypt_to_openssh(&enc_txt, Some("wrong")).unwrap_err().code(),
+            "BAD_PASSWORD"
+        );
+        // 缺口令报错。
+        assert!(decrypt_to_openssh(&enc_txt, None).is_err());
+    }
+
+    #[test]
+    fn decrypt_passthrough_for_unencrypted() {
+        let sk = gen_ed25519();
+        let txt = sk.to_openssh(LineEnding::LF).unwrap();
+        let plain = decrypt_to_openssh(&txt, None).unwrap();
+        assert_eq!(parse_private_openssh(&plain).unwrap().encrypted, Some(false));
     }
 
     #[test]
