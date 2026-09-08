@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod assets;
+pub mod repo;
 pub mod vault;
 pub mod write;
 

@@ -4,6 +4,7 @@ pub mod agent;
 pub mod app_config;
 pub mod commands;
 pub mod error;
+pub mod git;
 pub mod importer;
 pub mod model;
 pub mod platform;
@@ -49,6 +50,15 @@ pub fn run() {
             commands::agent::agent_load_all,
             commands::agent::agent_unload,
             commands::agent::agent_clear,
+            commands::repo::resolve_url,
+            commands::repo::scan_repos,
+            commands::repo::add_owner,
+            commands::repo::switch_repo_identity,
+            commands::repo::clone_repo,
+            commands::repo::set_github_pat,
+            commands::repo::test_github_pat,
+            commands::repo::list_github_orgs,
+            commands::repo::upload_public_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

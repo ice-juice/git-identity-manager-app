@@ -43,3 +43,6 @@ rand_core = { version = "0.6", features = ["std", "getrandom"] }
 
 # ---- M3 写操作/预览 ----
 similar = "2"
+
+# ---- M5 仓库/地址识别/PAT ----
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }

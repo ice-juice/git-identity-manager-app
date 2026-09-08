@@ -45,6 +45,9 @@ pub struct Identity {
 pub struct VaultData {
     pub identities: Vec<Identity>,
     pub keys: Vec<KeyRecord>,
+    /// 自动学习的克隆历史：owner(小写) → identity_id。
+    #[serde(default)]
+    pub clone_history: HashMap<String, String>,
 }
 
 /// 机密集合（data/secrets.enc）——只在 Rust 侧内存出现，绝不跨 IPC。
