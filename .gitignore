@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules/
+dist/
+target/
+**/target/
+
+# 机密与工作空间（绝不入库）
+*.enc
+*.key
+vault.json
+/workspace/
+/.vault/
+
+# 环境
+.env
+*.local
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 设计稿临时服务器无需忽略；截图 PNG 保留
+docs/design/_serve.mjs
