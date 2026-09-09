@@ -53,6 +53,9 @@ pub struct AppConfig {
     /// 最近一次自动同步说明（成功或失败摘要）。
     #[serde(default)]
     pub last_auto_sync_message: Option<String>,
+    /// 本机安装实例 ID。换机/重装会变，不进云端工作空间。
+    #[serde(default)]
+    pub machine_id: String,
 }
 
 impl Default for AppConfig {
@@ -68,6 +71,7 @@ impl Default for AppConfig {
             auto_sync_minutes: DEFAULT_AUTO_SYNC_MINUTES,
             last_auto_sync_at: None,
             last_auto_sync_message: None,
+            machine_id: String::new(),
         }
     }
 }
@@ -86,10 +90,24 @@ fn config_file() -> PathBuf {
 impl AppConfig {
     pub fn load() -> Self {
         let path = config_file();
-        match std::fs::read_to_string(&path) {
+        let mut cfg = match std::fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
             Err(_) => AppConfig::default(),
+        };
+        cfg.ensure_machine_id();
+        cfg
+    }
+
+    pub fn ensure_machine_id(&mut self) -> &str {
+        if self.machine_id.trim().is_empty() {
+            self.machine_id = uuid::Uuid::new_v4().to_string();
+            let _ = self.save();
         }
+        &self.machine_id
+    }
+
+    pub fn current_machine_id() -> String {
+        Self::load().machine_id
     }
 
     pub fn save(&self) -> Result<()> {
@@ -109,6 +127,7 @@ mod tests {
         assert_eq!(cfg.close_action, None);
         assert_eq!(cfg.auto_lock_minutes, 15);
         assert_eq!(cfg.auto_sync_minutes, DEFAULT_AUTO_SYNC_MINUTES);
+        assert!(cfg.machine_id.is_empty());
     }
 
     #[test]

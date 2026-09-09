@@ -128,6 +128,90 @@ function GithubPatSettings({ writesLocked }: { writesLocked: boolean }) {
   );
 }
 
+function FactoryResetPanel({ onDone }: { onDone: () => Promise<void> }) {
+  const [stage, setStage] = useState<"idle" | "confirm">("idle");
+  const [phrase, setPhrase] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [steps, setSteps] = useState<string[]>([]);
+
+  async function run() {
+    setErr("");
+    setBusy(true);
+    try {
+      const r = await api.factoryReset(true, phrase);
+      setSteps(r.steps);
+      try {
+        localStorage.removeItem("gam.theme");
+      } catch {
+        /* ignore */
+      }
+      await onDone();
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <div className="callout danger">
+        将清空工作空间数据、还原 ~/.ssh 入口、撤销本程序写入的用户环境变量与 Git/终端挂钩，并删除本机配置。云端数据不会删除。此操作不可撤销。
+      </div>
+      {err && <div className="err-text">{err}</div>}
+      {stage === "idle" ? (
+        <div>
+          <button type="button" className="btn danger sm" disabled={busy} onClick={() => setStage("confirm")}>
+            准备清空还原…
+          </button>
+        </div>
+      ) : (
+        <div className="stack">
+          <div className="muted" style={{ fontSize: 12 }}>
+            请再次确认：在下方输入「清空」，然后执行。
+          </div>
+          <input
+            className="input"
+            placeholder="输入 清空"
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+          />
+          <div className="row">
+            <button
+              type="button"
+              className="btn danger sm"
+              disabled={busy || phrase.trim() !== "清空"}
+              onClick={run}
+            >
+              {busy ? "正在还原…" : "确认清空并还原"}
+            </button>
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={busy}
+              onClick={() => {
+                setStage("idle");
+                setPhrase("");
+                setErr("");
+              }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+      {steps.length > 0 && (
+        <div className="callout info">
+          {steps.map((s) => (
+            <div key={s}>{s}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function formatExpiry(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -410,6 +494,10 @@ export function Settings() {
 
       <Card title="GitHub PAT">
         <GithubPatSettings writesLocked={!!status?.writesLocked} />
+      </Card>
+
+      <Card title="一键清空还原（测试用）">
+        <FactoryResetPanel onDone={refresh} />
       </Card>
 
       <Card title="数据备份与云端同步">

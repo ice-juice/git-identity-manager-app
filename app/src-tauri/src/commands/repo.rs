@@ -103,6 +103,10 @@ fn to_view(data: &crate::model::VaultData, rec: &ManagedRepo) -> ManagedRepoView
     }
 }
 
+fn current_machine_id() -> String {
+    crate::app_config::AppConfig::current_machine_id()
+}
+
 fn upsert_from_info(
     data: &mut crate::model::VaultData,
     info: &repo::RepoInfo,
@@ -124,6 +128,7 @@ fn upsert_from_info(
             identity_id: inferred_id,
             added_at: iso_now(),
             source: source.into(),
+            machine_id: current_machine_id(),
         },
     )
 }
@@ -185,6 +190,9 @@ pub fn scan_and_import_repos(
                 updated += 1;
             }
         }
+        let machine_id = current_machine_id();
+        crate::model::claim_unowned_repos(&mut data, &machine_id);
+        crate::model::keep_repos_for_machine(&mut data, &machine_id);
         store::save_data(v, &data)?;
         crate::util::audit(
             v.root(),
@@ -208,9 +216,13 @@ pub fn scan_and_import_repos(
 pub async fn list_managed_repos(state: State<'_, AppState>) -> Result<Vec<ManagedRepoView>> {
     with_vault(&state, |v| {
         let mut data = store::load_data(v)?;
+        let machine_id = current_machine_id();
+        let mut dirty = crate::model::claim_unowned_repos(&mut data, &machine_id);
+        if crate::model::keep_repos_for_machine(&mut data, &machine_id) {
+            dirty = true;
+        }
         let identities = data.identities.clone();
         let history = data.clone_history.clone();
-        let mut dirty = false;
         let mut views = Vec::with_capacity(data.repos.len());
         for rec in data.repos.iter_mut() {
             let exists = PathBuf::from(&rec.path).is_dir();
@@ -260,11 +272,13 @@ pub async fn remove_managed_repo(app: AppHandle, state: State<'_, AppState>, rep
     crate::commands::ensure_writes_allowed(&state)?;
     with_vault(&state, |v| {
         let mut data = store::load_data(v)?;
-        let before = data.repos.len();
-        data.repos.retain(|r| r.id != repo_id);
-        if data.repos.len() == before {
+        let machine_id = current_machine_id();
+        crate::model::claim_unowned_repos(&mut data, &machine_id);
+        crate::model::keep_repos_for_machine(&mut data, &machine_id);
+        if !data.repos.iter().any(|r| r.id == repo_id) {
             return Err(AppError::Invalid("仓库不在管理列表中".into()));
         }
+        data.repos.retain(|r| r.id != repo_id);
         data.deleted_repos.insert(repo_id.clone(), iso_now());
         store::save_data(v, &data)?;
         crate::util::audit(v.root(), &format!("移除已登记仓库 {repo_id}"));
@@ -442,6 +456,7 @@ pub fn switch_repo_identity(app: AppHandle, state: State<AppState>, repo_path: S
                 identity_id: Some(ident_id),
                 added_at: iso_now(),
                 source: "manual".into(),
+                machine_id: current_machine_id(),
             },
         );
         store::save_data(v, &data)?;
@@ -620,6 +635,7 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
                 identity_id: Some(identity.id.clone()),
                 added_at: iso_now(),
                 source: mode.to_string(),
+                machine_id: current_machine_id(),
             },
         );
         store::save_data(v, &data)?;

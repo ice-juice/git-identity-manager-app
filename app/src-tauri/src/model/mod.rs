@@ -3,6 +3,25 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod serde_maps {
+    use serde::ser::{SerializeMap, Serializer};
+    use std::collections::HashMap;
+
+    /// HashMap 的 JSON 键序不稳定，会导致云端清单哈希每次推送后对不上。
+    pub fn ordered_string_map<S: Serializer>(
+        map: &HashMap<String, String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut items: Vec<_> = map.iter().collect();
+        items.sort_by(|a, b| a.0.cmp(b.0));
+        let mut ser = serializer.serialize_map(Some(items.len()))?;
+        for (k, v) in items {
+            ser.serialize_entry(k, v)?;
+        }
+        ser.end()
+    }
+}
+
 /// 一把密钥的元数据（公开信息，可展示；私钥密文单独存 keys/<id>.enc）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -17,7 +36,8 @@ pub struct KeyRecord {
     /// 是否弱密钥（RSA < 2048）。
     pub weak: bool,
     pub source_path: Option<String>,
-    /// 工作空间 `ssh-keys/` 下可供 OpenSSH 使用的真实路径（默认是私钥，严格模式是 .pub）。
+    /// 工作空间 `ssh-keys/` 下的密钥路径。库内与云端存 `%GAM_WORKSPACE%/ssh-keys/...`，
+    /// 本机 OpenSSH 落盘时再展开成当前工作空间绝对路径。
     #[serde(default)]
     pub deployed_path: Option<String>,
     pub imported_at: String,
@@ -57,6 +77,9 @@ pub struct ManagedRepo {
     pub added_at: String,
     /// scan | clone | init | addRemote | manual
     pub source: String,
+    /// 登记该仓库的本机安装实例。空值表示升级前的旧记录。
+    #[serde(default)]
+    pub machine_id: String,
 }
 
 /// 加密落盘的元数据容器（data/identities.enc）。
@@ -66,16 +89,16 @@ pub struct VaultData {
     pub identities: Vec<Identity>,
     pub keys: Vec<KeyRecord>,
     /// 自动学习的克隆历史：owner(小写) → identity_id。
-    #[serde(default)]
+    #[serde(default, serialize_with = "serde_maps::ordered_string_map")]
     pub clone_history: HashMap<String, String>,
     /// 已登记的本地仓库。
     #[serde(default)]
     pub repos: Vec<ManagedRepo>,
     /// 已删除身份：id → 删除时间。多端拉取时用于真正去掉对端已删的身份。
-    #[serde(default)]
+    #[serde(default, serialize_with = "serde_maps::ordered_string_map")]
     pub deleted_identities: HashMap<String, String>,
     /// 已删除仓库：id → 删除时间。避免云端旧快照把本机刚移除的登记合并回来。
-    #[serde(default)]
+    #[serde(default, serialize_with = "serde_maps::ordered_string_map")]
     pub deleted_repos: HashMap<String, String>,
 }
 
@@ -84,6 +107,7 @@ pub struct VaultData {
 #[serde(rename_all = "camelCase")]
 pub struct Secrets {
     /// keyId -> 私钥口令。
+    #[serde(serialize_with = "serde_maps::ordered_string_map")]
     pub key_passphrases: HashMap<String, String>,
     /// GitHub PAT。
     pub github_pat: Option<String>,
@@ -170,7 +194,81 @@ pub fn merge_vault_data(local: VaultData, remote: VaultData) -> VaultData {
     }
 }
 
-fn timestamp_newer_or_eq(a: &str, b: &str) -> bool {
+/// 把本地尚未打戳、且目录仍在的旧仓库记到当前机器。
+/// 换机拉下来的失效路径保持无归属，随后会被 `keep_repos_for_machine` 丢掉且不打墓碑。
+pub fn claim_unowned_repos(data: &mut VaultData, machine_id: &str) -> bool {
+    let mut changed = false;
+    for repo in &mut data.repos {
+        if repo.machine_id.trim().is_empty() && std::path::Path::new(&repo.path).is_dir() {
+            repo.machine_id = machine_id.to_string();
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// 本机库只保留当前机器的仓库，外机路径不落本地。
+pub fn keep_repos_for_machine(data: &mut VaultData, machine_id: &str) -> bool {
+    let before = data.repos.len();
+    data.repos.retain(|repo| repo.machine_id == machine_id);
+    data.repos.len() != before
+}
+
+/// 恢复向导勾选「恢复仓库」时：把云端仓库改盖成本机归属。
+pub fn adopt_repos_as_machine(data: &mut VaultData, remote: &VaultData, machine_id: &str) {
+    for mut repo in remote.repos.clone() {
+        if data.deleted_repos.contains_key(&repo.id) {
+            continue;
+        }
+        repo.machine_id = machine_id.to_string();
+        if let Some(existing) = data.repos.iter_mut().find(|item| item.id == repo.id) {
+            *existing = repo;
+        } else {
+            data.repos.push(repo);
+        }
+    }
+}
+
+/// 推送时把本机仓库嵌回云端全集，保留其他机器的登记，避免互相覆盖。
+pub fn compose_cloud_repos(local: &VaultData, remote: &VaultData, machine_id: &str) -> (Vec<ManagedRepo>, HashMap<String, String>) {
+    let mut deleted = local.deleted_repos.clone();
+    for (id, ts) in &remote.deleted_repos {
+        match deleted.get(id) {
+            Some(old) if old >= ts => {}
+            _ => {
+                deleted.insert(id.clone(), ts.clone());
+            }
+        }
+    }
+    let local_ids: std::collections::HashSet<&str> =
+        local.repos.iter().map(|repo| repo.id.as_str()).collect();
+    let mut repos: Vec<ManagedRepo> = remote
+        .repos
+        .iter()
+        .filter(|repo| {
+            if deleted.contains_key(&repo.id) {
+                return false;
+            }
+            if repo.machine_id == machine_id {
+                return false;
+            }
+            if repo.machine_id.trim().is_empty() && local_ids.contains(repo.id.as_str()) {
+                return false;
+            }
+            true
+        })
+        .cloned()
+        .collect();
+    for repo in &local.repos {
+        if repo.machine_id == machine_id && !deleted.contains_key(&repo.id) {
+            repos.retain(|item| item.id != repo.id);
+            repos.push(repo.clone());
+        }
+    }
+    (repos, deleted)
+}
+
+pub fn timestamp_newer_or_eq(a: &str, b: &str) -> bool {
     match (parse_rfc3339(a), parse_rfc3339(b)) {
         (Some(ta), Some(tb)) => ta >= tb,
         _ => a >= b,
@@ -242,7 +340,14 @@ mod tests {
             identity_id: None,
             added_at: "2026-09-01T00:00:00Z".into(),
             source: "scan".into(),
+            machine_id: String::new(),
         }
+    }
+
+    fn repo_on(id: &str, path: &str, machine: &str) -> ManagedRepo {
+        let mut item = repo(id, path);
+        item.machine_id = machine.into();
+        item
     }
 
     #[test]
@@ -265,5 +370,91 @@ mod tests {
         assert!(ids.contains(&"other"));
         assert!(!ids.contains(&"gone"));
         assert!(merged.deleted_repos.contains_key("gone"));
+    }
+
+    #[test]
+    fn claim_and_keep_and_compose_repos_by_machine() {
+        let mut local = VaultData {
+            repos: vec![
+                repo_on("old", "D:/local", "pc-a"),
+                repo_on("mine", "D:/mine", "pc-a"),
+                repo_on("theirs", "E:/theirs", "pc-b"),
+            ],
+            ..VaultData::default()
+        };
+        assert!(!claim_unowned_repos(&mut local, "pc-a"));
+        assert!(keep_repos_for_machine(&mut local, "pc-a"));
+        assert_eq!(local.repos.len(), 2);
+        assert!(local.repos.iter().all(|r| r.machine_id == "pc-a"));
+
+        let existing = std::env::temp_dir();
+        let mut orphan = VaultData {
+            repos: vec![
+                repo("ghost", "Z:/definitely-missing-gam-repo"),
+                {
+                    let mut item = repo("here", existing.to_string_lossy().as_ref());
+                    item.machine_id.clear();
+                    item
+                },
+            ],
+            ..VaultData::default()
+        };
+        assert!(claim_unowned_repos(&mut orphan, "pc-a"));
+        assert!(orphan.repos.iter().any(|r| r.id == "ghost" && r.machine_id.is_empty()));
+        assert_eq!(
+            orphan.repos.iter().find(|r| r.id == "here").unwrap().machine_id,
+            "pc-a"
+        );
+        keep_repos_for_machine(&mut orphan, "pc-a");
+        assert!(orphan.repos.iter().all(|r| r.id == "here"));
+
+        let remote = VaultData {
+            repos: vec![
+                repo_on("mine", "D:/stale", "pc-a"),
+                repo_on("theirs", "E:/theirs", "pc-b"),
+                repo("legacy", "C:/legacy"),
+            ],
+            ..VaultData::default()
+        };
+        let (cloud, _) = compose_cloud_repos(&local, &remote, "pc-a");
+        let ids: Vec<_> = cloud.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"old"));
+        assert!(ids.contains(&"mine"));
+        assert!(ids.contains(&"theirs"));
+        assert!(ids.contains(&"legacy"));
+        assert_eq!(
+            cloud.iter().find(|r| r.id == "mine").unwrap().path,
+            "D:/mine"
+        );
+    }
+
+    #[test]
+    fn adopt_remote_repos_stamps_current_machine() {
+        let mut local = VaultData::default();
+        let remote = VaultData {
+            repos: vec![repo_on("r1", "D:/old-machine", "pc-old")],
+            ..VaultData::default()
+        };
+        adopt_repos_as_machine(&mut local, &remote, "pc-new");
+        keep_repos_for_machine(&mut local, "pc-new");
+        assert_eq!(local.repos.len(), 1);
+        assert_eq!(local.repos[0].machine_id, "pc-new");
+    }
+
+    #[test]
+    fn vault_data_json_is_deterministic_with_maps() {
+        let mut data = VaultData::default();
+        data.clone_history.insert("zeta".into(), "id-z".into());
+        data.clone_history.insert("alpha".into(), "id-a".into());
+        data.deleted_identities.insert("b".into(), "t2".into());
+        data.deleted_identities.insert("a".into(), "t1".into());
+        let a = serde_json::to_vec(&data).unwrap();
+        let b = serde_json::to_vec(&data).unwrap();
+        assert_eq!(a, b);
+        let text = String::from_utf8(a).unwrap();
+        assert!(
+            text.find("\"alpha\"").unwrap() < text.find("\"zeta\"").unwrap(),
+            "clone_history 应按键名排序序列化"
+        );
     }
 }

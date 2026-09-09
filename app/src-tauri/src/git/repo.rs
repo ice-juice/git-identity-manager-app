@@ -361,6 +361,9 @@ pub fn upsert_managed_repo(repos: &mut Vec<ManagedRepo>, incoming: ManagedRepo) 
         if !incoming.source.is_empty() {
             existing.source = incoming.source;
         }
+        if existing.machine_id.trim().is_empty() && !incoming.machine_id.trim().is_empty() {
+            existing.machine_id = incoming.machine_id;
+        }
         (false, existing.id.clone())
     } else {
         let id = incoming.id.clone();
@@ -531,6 +534,7 @@ mod tests {
             identity_id: None,
             added_at: "t1".into(),
             source: "scan".into(),
+            machine_id: "m1".into(),
         };
         let (is_new, id) = upsert_managed_repo(&mut repos, first);
         assert!(is_new);
@@ -545,6 +549,7 @@ mod tests {
                 identity_id: Some("i1".into()),
                 added_at: "t2".into(),
                 source: "clone".into(),
+                machine_id: "m1".into(),
             },
         );
         assert!(!is_new);
@@ -568,6 +573,7 @@ mod tests {
                 identity_id: None,
                 added_at: "t1".into(),
                 source: "scan".into(),
+                machine_id: "m1".into(),
             },
         );
         assert!(is_new);
@@ -581,6 +587,7 @@ mod tests {
                 identity_id: Some("i1".into()),
                 added_at: "t2".into(),
                 source: "clone".into(),
+                machine_id: "m1".into(),
             },
         );
         assert!(!is_new);

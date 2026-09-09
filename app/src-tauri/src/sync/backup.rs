@@ -59,7 +59,8 @@ pub fn export_backup(vault: &Vault, dest_path: &Path, password: &str) -> Result<
         return Err(AppError::Invalid("备份加密密码不能为空".into()));
     }
 
-    let data = store::load_data(vault)?;
+    let mut data = store::load_data(vault)?;
+    crate::sys::portableize_vault_data(&mut data);
     let secrets = store::load_secrets(vault)?;
 
     // 收集所有私钥明文（内存中临时持有，base64 编码打入 payload）
@@ -235,7 +236,11 @@ pub fn import_backup(
         current_data.clone_history.insert(k, v);
     }
 
-    // 保存
+    crate::sys::portableize_vault_data(&mut current_data);
+    let machine_id = crate::app_config::AppConfig::current_machine_id();
+    for repo in &mut current_data.repos {
+        repo.machine_id = machine_id.clone();
+    }
     store::save_data(vault, &current_data)?;
     store::save_secrets(vault, &current_secrets)?;
 

@@ -40,6 +40,7 @@ pub fn run() {
             commands::vault::vault_try_grace_unlock,
             commands::vault::set_launch_at_login,
             commands::vault::set_grace_days,
+            commands::vault::factory_reset,
             commands::assets::read_ssh_config,
             commands::assets::open_ssh_config,
             commands::assets::scan_keys,
@@ -62,6 +63,7 @@ pub fn run() {
             commands::write::reveal_key_material,
             commands::agent::agent_status,
             commands::agent::agent_ensure,
+            commands::agent::agent_unify_env,
             commands::agent::agent_load,
             commands::agent::agent_load_identity,
             commands::agent::agent_load_all,
@@ -89,6 +91,8 @@ pub fn run() {
             commands::sync::import_vault_backup,
             commands::sync::get_cloud_sync_config,
             commands::sync::save_cloud_sync_config,
+            commands::sync::export_s3_config,
+            commands::sync::import_s3_config,
             commands::sync::test_cloud_sync_config,
             commands::sync::get_cloud_sync_status,
             commands::sync::cloud_sync_push,
@@ -98,6 +102,8 @@ pub fn run() {
             commands::sync::list_cloud_snapshots,
             commands::sync::restore_cloud_snapshot,
             commands::sync::run_auto_sync_now,
+            commands::sync::preview_cloud_restore,
+            commands::sync::restore_from_cloud,
             commands::window::apply_close_choice,
             commands::window::get_close_preference,
             commands::window::clear_close_preference,
@@ -105,6 +111,7 @@ pub fn run() {
         .setup(|app| {
             tray::install(app.handle())?;
             crate::sync::scheduler::start(app.handle().clone());
+            commands::agent::bootstrap_git_agent(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {

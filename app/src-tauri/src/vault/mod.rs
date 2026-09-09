@@ -209,6 +209,46 @@ impl Vault {
         Ok(display)
     }
 
+    /// 仅用于云端预览：用已解开的 MK 构造内存中的 Vault（不落盘）。
+    pub fn from_header_unlocked(header: VaultHeader, mk: MasterKey) -> Self {
+        let mut header = header;
+        header.kdf.clamp_to_safe_bounds();
+        Vault {
+            root: PathBuf::new(),
+            header,
+            mk: Some(mk),
+        }
+    }
+
+    /// 换机恢复：沿用旧工作空间头部与 MK，用新访问密码重新包裹后落盘。
+    /// 恢复信封保持不变，旧恢复密钥在新机器上仍可解锁。
+    pub fn restore(
+        root: &Path,
+        mut header: VaultHeader,
+        mk: MasterKey,
+        new_password: &str,
+    ) -> Result<Self> {
+        if new_password.is_empty() {
+            return Err(AppError::Invalid("访问密码不能为空".into()));
+        }
+        if Self::exists(root) {
+            return Err(AppError::AlreadyInitialized(root.display().to_string()));
+        }
+        std::fs::create_dir_all(root)?;
+        for sub in ["data", "keys", "backups", "sync", "ssh-keys", "ssh"] {
+            std::fs::create_dir_all(root.join(sub))?;
+        }
+        header.kdf.clamp_to_safe_bounds();
+        header.envelopes.password = envelope::wrap_with_password(&mk, new_password, &header.kdf)?;
+        let vault = Vault {
+            root: root.to_path_buf(),
+            header,
+            mk: Some(mk),
+        };
+        vault.persist_header()?;
+        Ok(vault)
+    }
+
     /// 原子写入 vault.json（临时文件 + rename）。
     fn persist_header(&self) -> Result<()> {
         let path = Self::vault_path(&self.root);
@@ -361,5 +401,31 @@ mod tests {
         let _ = Vault::init(&root, "pw", fast_kdf()).unwrap();
         assert!(Vault::init(&root, "pw", fast_kdf()).is_err());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn restore_keeps_workspace_id_mk_and_recovery() {
+        let src = temp_root();
+        let (v, rec) = Vault::init(&src, "old-pw", fast_kdf()).unwrap();
+        let ws = v.workspace_id().to_string();
+        let sync_key = v.subkey(crypto::LABEL_SYNC_OBJECT).unwrap();
+        let header = v.header().clone();
+        let mk = MasterKey::from_bytes(v.master_key_bytes().unwrap());
+
+        let dest = temp_root();
+        let restored = Vault::restore(&dest, header, mk, "new-pw").unwrap();
+        assert_eq!(restored.workspace_id(), ws);
+        assert_eq!(restored.subkey(crypto::LABEL_SYNC_OBJECT).unwrap(), sync_key);
+
+        let mut by_pw = Vault::load(&dest).unwrap();
+        assert!(by_pw.unlock_with_password("old-pw").is_err());
+        by_pw.unlock_with_password("new-pw").unwrap();
+
+        let mut by_rec = Vault::load(&dest).unwrap();
+        by_rec.unlock_with_recovery(&rec).unwrap();
+        assert_eq!(by_rec.subkey(crypto::LABEL_SYNC_OBJECT).unwrap(), sync_key);
+
+        std::fs::remove_dir_all(&src).ok();
+        std::fs::remove_dir_all(&dest).ok();
     }
 }

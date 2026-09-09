@@ -177,6 +177,36 @@ export function SyncPage() {
     }
   }
 
+  async function exportS3File() {
+    try {
+      const selected = await save({
+        defaultPath: `gam-s3-${s3Config.bucket || "config"}.json`,
+        filters: [{ name: "GAM S3/R2 配置", extensions: ["json"] }],
+      });
+      if (!selected) return;
+      await api.exportS3Config(selected, s3Config);
+      setSyncNotice("✅ 已导出 S3/R2 配置文件（含访问密钥，请妥善保管）");
+    } catch (e) {
+      setSyncNotice(`❌ 导出配置失败: ${errMessage(e)}`);
+    }
+  }
+
+  async function importS3File() {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "GAM S3/R2 配置", extensions: ["json"] }],
+      });
+      if (!selected || typeof selected !== "string") return;
+      const cfg = await api.importS3Config(selected);
+      setS3Config(cfg);
+      setSyncNotice("✅ 已导入 S3/R2 配置，请确认后保存");
+    } catch (e) {
+      setSyncNotice(`❌ 导入配置失败: ${errMessage(e)}`);
+    }
+  }
+
   // 测试云端连通性
   async function testConnection() {
     if (!s3Config.endpoint || !s3Config.bucket || !s3Config.accessKeyId || !s3Config.secretAccessKey) {
@@ -473,6 +503,17 @@ export function SyncPage() {
               </div>
             )}
 
+            <p className="muted" style={{ fontSize: 12, marginBottom: 12, lineHeight: 1.55 }}>
+              推送时会把工作空间头部（仅信封，无明文机密）存到云端固定路径，供新设备用恢复密钥换机还原。
+              新电脑初始化请选「从云端恢复」，并填写与这里完全相同的 Endpoint、Bucket 和路径前缀。
+            </p>
+            {cloudStatus && cloudStatus.status !== "unconfigured" && (
+              <div className={cloudStatus.headerReady ? "callout good" : "callout danger"} style={{ marginBottom: 12 }}>
+                {cloudStatus.headerReady
+                  ? "换机恢复头部已在云端，新设备可以用恢复密钥还原。"
+                  : "云端还没有换机恢复头部。请再点一次「推送到云端」；成功后应提示「已写入换机恢复头部」。"}
+              </div>
+            )}
             <div className="flex gap-2">
               <button
                 type="button"
@@ -764,6 +805,14 @@ export function SyncPage() {
               >
                 <Zap size={13} />
                 {testing ? "正在探测连通性…" : "测试连通性"}
+              </button>
+              <button type="button" className="btn ghost sm" onClick={exportS3File}>
+                <Download size={13} />
+                导出配置
+              </button>
+              <button type="button" className="btn ghost sm" onClick={importS3File}>
+                <Upload size={13} />
+                导入配置
               </button>
             </div>
           </Card>

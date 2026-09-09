@@ -213,10 +213,63 @@ fn write_system_include_stub(workspace_config: &std::path::Path) -> Result<()> {
     crate::vault::atomic_write(&home, stub.as_bytes())
 }
 
+fn newest_sibling_backup(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let name = path.file_name()?.to_str()?;
+    let dir = path.parent()?;
+    let prefix = format!("{name}.bak.");
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    let entries = std::fs::read_dir(dir).ok()?;
+    for ent in entries.flatten() {
+        let fname = ent.file_name();
+        let s = fname.to_string_lossy();
+        if !s.starts_with(&prefix) {
+            continue;
+        }
+        let t = ent.metadata().ok()?.modified().ok()?;
+        if best.as_ref().map(|(bt, _)| t > *bt).unwrap_or(true) {
+            best = Some((t, ent.path()));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// 撤销本程序对 `~/.ssh` 的改写：去掉 Include 入口与镜像，尽量恢复备份。
+pub fn revert_home_ssh_bridge() -> Result<Vec<String>> {
+    let mut steps = Vec::new();
+    let included = home_included_config();
+    if included.exists() {
+        let _ = std::fs::remove_file(&included);
+        steps.push(format!("已删除 {}", included.display()));
+    }
+    let home = home_ssh_config();
+    let current = std::fs::read_to_string(&home).unwrap_or_default();
+    let dummy = std::path::Path::new("");
+    let ours = is_system_include_stub(&current, dummy)
+        || text_is_include_only(&current)
+        || current.contains(HOME_INCLUDED_CONFIG_NAME);
+    if ours {
+        if let Some(bak) = newest_sibling_backup(&home) {
+            std::fs::copy(&bak, &home)?;
+            steps.push(format!("已从备份恢复 {} ← {}", home.display(), bak.display()));
+        } else {
+            crate::vault::atomic_write(&home, b"# SSH config\n")?;
+            steps.push("未找到 ~/.ssh/config 备份，已清空本程序写入的 Include 入口".into());
+        }
+    } else if !current.trim().is_empty() {
+        let body = home_config_body_to_adopt(&current, dummy);
+        if body != current {
+            crate::vault::atomic_write(&home, body.as_bytes())?;
+            steps.push("已从 ~/.ssh/config 去掉本程序的 Include".into());
+        }
+    }
+    Ok(steps)
+}
+
 /// 把工作空间正本镜像到 `~/.ssh/git-account-manager.config`，并改写系统入口为相对 Include。
 pub fn ensure_home_ssh_bridge(workspace: &std::path::Path) -> Result<()> {
     let dest = workspace_ssh_config(workspace);
     let text = std::fs::read_to_string(&dest).unwrap_or_default();
+    let text = localize_ssh_config(&text, workspace);
     write_home_include_mirror(&text)?;
     write_system_include_stub(&dest)?;
     let _ = tighten_user_acl(&dest);
@@ -253,12 +306,17 @@ pub fn adopt_ssh_config(workspace: &std::path::Path) -> Result<std::path::PathBu
 
     write_system_include_stub(&dest)?;
     let dest_text = std::fs::read_to_string(&dest).unwrap_or_default();
-    let _ = write_home_include_mirror(&dest_text);
+    let localized = localize_ssh_config(&dest_text, workspace);
+    if localized != dest_text {
+        crate::vault::atomic_write(&dest, localized.as_bytes())?;
+    }
+    let _ = write_home_include_mirror(&localized);
     let _ = tighten_user_acl(&dest);
     Ok(dest)
 }
 
-/// 写入工作空间正本，并确保 `~/.ssh/config` 以 Include 指向它。
+/// 写入工作空间正本（本机展开绝对路径），并确保 `~/.ssh/config` 以 Include 指向它。
+/// 这里写出的文本只给本机 OpenSSH 用，上传前必须再收成 `canonical_ssh_for_sync`。
 pub fn persist_ssh_config(workspace: Option<&std::path::Path>, text: &str) -> Result<()> {
     let Some(ws) = workspace else {
         let home = home_ssh_config();
@@ -271,8 +329,9 @@ pub fn persist_ssh_config(workspace: Option<&std::path::Path>, text: &str) -> Re
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let text = localize_ssh_config(text, ws);
     crate::vault::atomic_write(&dest, text.as_bytes())?;
-    let _ = write_home_include_mirror(text);
+    let _ = write_home_include_mirror(&text);
     write_system_include_stub(&dest)?;
     let _ = tighten_user_acl(&dest);
     Ok(())
@@ -340,6 +399,117 @@ pub fn key_file_stem(name: &str) -> String {
     } else {
         format!("id_ed25519_{cleaned}")
     }
+}
+
+/// 云端/库内工作空间路径占位符。本机落盘给 OpenSSH 时再替换成当前工作空间绝对路径。
+pub const WORKSPACE_PATH_TOKEN: &str = "%GAM_WORKSPACE%";
+
+fn normalize_slashes(raw: &str) -> String {
+    raw.trim().trim_matches('"').replace('\\', "/")
+}
+
+/// 若路径指向工作空间 `ssh-keys/` 下的文件，返回文件名（可含 `.pub`）。
+pub fn workspace_key_filename(raw: &str) -> Option<String> {
+    let mut t = normalize_slashes(raw);
+    if let Some(rest) = t.strip_prefix(WORKSPACE_PATH_TOKEN) {
+        t = rest.trim_start_matches('/').to_string();
+    }
+    let lower = t.to_ascii_lowercase();
+    let after = if let Some(idx) = lower.rfind("/ssh-keys/") {
+        &t[idx + "/ssh-keys/".len()..]
+    } else if lower.starts_with("ssh-keys/") {
+        &t["ssh-keys/".len()..]
+    } else {
+        return None;
+    };
+    if after.is_empty() || after.contains('/') || after.contains("..") {
+        return None;
+    }
+    Some(after.to_string())
+}
+
+pub fn portable_deployed_path(raw: &str) -> String {
+    if let Some(name) = workspace_key_filename(raw) {
+        format!("{WORKSPACE_PATH_TOKEN}/ssh-keys/{name}")
+    } else {
+        raw.trim().to_string()
+    }
+}
+
+/// 把工作空间密钥路径解析成当前机器上的绝对 IdentityFile。
+pub fn resolve_identity_file(raw: &str, workspace: &std::path::Path) -> String {
+    if let Some(name) = workspace_key_filename(raw) {
+        identity_file_for_ssh(&workspace_ssh_keys_dir(workspace).join(name))
+    } else {
+        let t = normalize_slashes(raw);
+        if t.chars().any(|c| c.is_whitespace()) && !t.starts_with('"') {
+            format!("\"{t}\"")
+        } else {
+            t
+        }
+    }
+}
+
+fn map_ssh_identity_files(text: &str, mut f: impl FnMut(&str) -> String) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let is_idf = trimmed.len() >= 12 && trimmed[..12].eq_ignore_ascii_case("IdentityFile");
+        if is_idf {
+            let rest = trimmed[12..].trim_start();
+            let rest = rest.strip_prefix('=').map(str::trim_start).unwrap_or(rest);
+            let indent = line.len() - trimmed.len();
+            out.push_str(&line[..indent]);
+            out.push_str("IdentityFile ");
+            out.push_str(&f(rest));
+            out.push('\n');
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// 本机 OpenSSH 需要绝对路径：把占位符和任意机器上的 `ssh-keys/` 路径展开到当前工作空间。
+/// 只用于本机落盘，结果不得作为云同步 / 快照正文。
+pub fn localize_ssh_config(text: &str, workspace: &std::path::Path) -> String {
+    map_ssh_identity_files(text, |raw| resolve_identity_file(raw, workspace))
+}
+
+/// 云端、历史快照、同步比对只认这个可移植形态。
+/// 换机后重写的本机绝对路径若原样上传，会覆盖对端机器上的路径。
+pub fn canonical_ssh_for_sync(text: &str) -> String {
+    portable_ssh_config(text)
+}
+
+/// 身份里的 `deployed_path` 同样不能带着某台机器的盘符进云端。
+pub fn portableize_vault_data(data: &mut crate::model::VaultData) {
+    for key in data.keys.iter_mut() {
+        if let Some(path) = key.deployed_path.as_deref() {
+            key.deployed_path = Some(portable_deployed_path(path));
+        }
+    }
+}
+
+pub fn vault_data_for_sync(data: &crate::model::VaultData) -> crate::model::VaultData {
+    let mut cloned = data.clone();
+    portableize_vault_data(&mut cloned);
+    cloned
+}
+
+/// 把工作空间密钥路径改写成占位符，便于跨机器同步。
+pub fn portable_ssh_config(text: &str) -> String {
+    map_ssh_identity_files(text, |raw| {
+        if workspace_key_filename(raw).is_some() {
+            portable_deployed_path(raw)
+        } else {
+            normalize_slashes(raw)
+        }
+    })
 }
 
 /// SSH config 的 IdentityFile 值：绝对路径、正斜杠；含空格时加引号。
@@ -416,5 +586,67 @@ mod tests {
             "# c\nInclude git-account-manager.config\n",
             dest
         ));
+    }
+
+    #[test]
+    fn cloud_form_ignores_rewritten_machine_paths() {
+        let portable = "Host gh\n    HostName github.com\n    User git\n    IdentityFile %GAM_WORKSPACE%/ssh-keys/id_ed25519\n    IdentitiesOnly yes\n";
+        let old = Path::new("D:/gitIdentifyData");
+        let neu = Path::new("D:/dataSpace/gitIdentityData");
+        let on_old = localize_ssh_config(portable, old);
+        let on_new = localize_ssh_config(portable, neu);
+        assert!(on_old.contains("D:/gitIdentifyData/ssh-keys/id_ed25519"));
+        assert!(on_new.contains("D:/dataSpace/gitIdentityData/ssh-keys/id_ed25519"));
+        assert_ne!(on_old, on_new);
+        assert_eq!(canonical_ssh_for_sync(&on_old), portable);
+        assert_eq!(canonical_ssh_for_sync(&on_new), portable);
+        assert_eq!(canonical_ssh_for_sync(&on_old), canonical_ssh_for_sync(&on_new));
+    }
+
+    #[test]
+    fn vault_data_for_sync_strips_machine_deployed_paths() {
+        let mut data = crate::model::VaultData::default();
+        data.keys.push(crate::model::KeyRecord {
+            id: "k1".into(),
+            name: "id_ed25519_a".into(),
+            algorithm: "ed25519".into(),
+            fingerprint: "SHA256:x".into(),
+            public_openssh: "ssh-ed25519 AAAA".into(),
+            bits: Some(256),
+            has_passphrase: true,
+            weak: false,
+            source_path: None,
+            deployed_path: Some("D:/dataSpace/gitIdentityData/ssh-keys/id_ed25519_a".into()),
+            imported_at: "t".into(),
+        });
+        let sync = vault_data_for_sync(&data);
+        assert_eq!(
+            sync.keys[0].deployed_path.as_deref(),
+            Some("%GAM_WORKSPACE%/ssh-keys/id_ed25519_a")
+        );
+        assert_ne!(sync.keys[0].deployed_path, data.keys[0].deployed_path);
+    }
+
+    #[test]
+    fn ssh_identity_paths_relocate_across_workspaces() {
+        let old = "Host github-a\n    IdentityFile D:/gitIdentifyData/ssh-keys/id_ed25519_a.pub\n    IdentitiesOnly yes\n";
+        let ws = Path::new(r"D:\dataSpace\gitIdentityData");
+        let local = localize_ssh_config(old, ws);
+        assert!(local.contains("D:/dataSpace/gitIdentityData/ssh-keys/id_ed25519_a.pub"));
+        assert!(!local.contains("gitIdentifyData/ssh-keys"));
+
+        let portable = portable_ssh_config(&local);
+        assert!(portable.contains("%GAM_WORKSPACE%/ssh-keys/id_ed25519_a.pub"));
+        assert_eq!(localize_ssh_config(&portable, ws), local);
+
+        let again = localize_ssh_config(&local, ws);
+        assert_eq!(again, local);
+
+        let external = "Host lab\n    IdentityFile C:/Users/me/.ssh/id_ed25519\n";
+        assert!(localize_ssh_config(external, ws).contains("C:/Users/me/.ssh/id_ed25519"));
+        assert_eq!(
+            portable_deployed_path(r"D:\gitIdentifyData\ssh-keys\id_ed25519_a"),
+            "%GAM_WORKSPACE%/ssh-keys/id_ed25519_a"
+        );
     }
 }

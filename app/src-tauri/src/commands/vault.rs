@@ -126,6 +126,29 @@ pub fn vault_init(state: State<AppState>, path: String, password: String) -> Res
     })
 }
 
+/// 将已解锁的 Vault 登记为本机工作空间（初始化或换机恢复后调用）。
+pub(crate) fn adopt_unlocked_vault(
+    state: &AppState,
+    vault: crate::vault::Vault,
+    workspace_path: String,
+    cloud_sync: Option<crate::sync::s3::S3Config>,
+) -> Result<()> {
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.workspace_path = Some(workspace_path.clone());
+        if let Some(sync) = cloud_sync {
+            cfg.cloud_sync = Some(sync);
+        }
+        cfg.save()?;
+    }
+    let root = PathBuf::from(&workspace_path);
+    *state.vault.lock().unwrap() = Some(vault);
+    state.unlock_guard.lock().unwrap().reset();
+    grant_grace_if_configured(state);
+    let _ = crate::sys::adopt_ssh_config(&root);
+    Ok(())
+}
+
 fn ensure_loaded(state: &AppState) -> Result<()> {
     let cfg_path = {
         let cfg = state.config.lock().unwrap();
@@ -249,11 +272,13 @@ pub fn change_password(state: State<AppState>, old_password: String, new_passwor
 
 /// 轮换恢复密钥（需已解锁），返回新恢复密钥。
 #[tauri::command]
-pub fn rotate_recovery_key(state: State<AppState>) -> Result<InitResult> {
+pub fn rotate_recovery_key(app: AppHandle, state: State<AppState>) -> Result<InitResult> {
     let mut vault = state.vault.lock().unwrap();
     let v = vault.as_mut().ok_or(AppError::Locked)?;
     let recovery_key = v.rotate_recovery_key()?;
     let workspace_id = v.workspace_id().to_string();
+    drop(vault);
+    crate::sync::scheduler::kick_publish(app);
     Ok(InitResult {
         recovery_key,
         workspace_id,
@@ -411,4 +436,90 @@ pub fn set_grace_days(state: State<AppState>, days: u32) -> Result<()> {
         grant_grace_if_configured(&state);
     }
     Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryResetReport {
+    pub steps: Vec<String>,
+}
+
+fn wipe_workspace_files(root: &std::path::Path) -> Vec<String> {
+    let mut steps = Vec::new();
+    for name in ["vault.json", "data", "keys", "backups", "sync", "ssh-keys", "ssh", "audit.log"] {
+        let path = root.join(name);
+        if path.is_dir() {
+            if std::fs::remove_dir_all(&path).is_ok() {
+                steps.push(format!("已删除目录 {}", path.display()));
+            }
+        } else if path.is_file() && std::fs::remove_file(&path).is_ok() {
+            steps.push(format!("已删除 {}", path.display()));
+        }
+    }
+    steps
+}
+
+/// 一键清空本机程序状态，回到未初始化。需二次确认：`confirmed=true` 且短语为「清空」。
+#[tauri::command]
+pub fn factory_reset(
+    state: State<AppState>,
+    confirmed: bool,
+    confirm_phrase: String,
+) -> Result<FactoryResetReport> {
+    if !confirmed {
+        return Err(AppError::Invalid("请先确认要清空还原本程序".into()));
+    }
+    if confirm_phrase.trim() != "清空" {
+        return Err(AppError::Invalid("请输入「清空」以确认不可恢复的还原".into()));
+    }
+
+    let mut steps = Vec::new();
+    let workspace = state.config.lock().unwrap().workspace_path.clone();
+
+    let agent_snapshot = state.agent_env.lock().ok().map(|g| g.clone());
+    if let Some(env) = agent_snapshot {
+        if crate::agent::is_ready(&env) {
+            let _ = crate::agent::clear(&env);
+            steps.push("已清空 ssh-agent 中的密钥".into());
+        }
+    }
+    *state.agent_env.lock().unwrap() = crate::agent::AgentEnv::default();
+
+    match crate::agent::unify::revert() {
+        Ok(more) => steps.extend(more),
+        Err(e) => steps.push(format!("还原用户环境时部分失败：{e}")),
+    }
+    match crate::sys::revert_home_ssh_bridge() {
+        Ok(more) => steps.extend(more),
+        Err(e) => steps.push(format!("还原 ~/.ssh 时部分失败：{e}")),
+    }
+    let pid = crate::sys::ssh_dir().join("agent").join("git-account-manager.pid");
+    if pid.is_file() {
+        let _ = std::fs::remove_file(&pid);
+        steps.push("已删除本机 Git agent pid 记录".into());
+    }
+
+    if let Some(path) = workspace {
+        steps.extend(wipe_workspace_files(&PathBuf::from(path)));
+    }
+
+    session::clear();
+    let _ = autostart::set_enabled(false);
+    steps.push("已关闭开机自启动并清除免验证会话".into());
+
+    *state.vault.lock().unwrap() = None;
+    {
+        let mut cfg = crate::app_config::AppConfig::default();
+        cfg.ensure_machine_id();
+        cfg.save()?;
+        *state.config.lock().unwrap() = cfg;
+    }
+    state.unlock_guard.lock().unwrap().reset();
+    state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut note) = state.startup_note.lock() {
+        *note = None;
+    }
+    steps.push("已重置本机应用配置，程序回到未初始化状态".into());
+
+    Ok(FactoryResetReport { steps })
 }

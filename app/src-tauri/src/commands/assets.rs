@@ -234,7 +234,14 @@ fn detect_git_ssh() -> Option<String> {
 pub fn list_keys(state: State<AppState>) -> Result<Vec<KeyRecord>> {
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
-    Ok(crate::store::load_data(v)?.keys)
+    let root = v.root().to_path_buf();
+    let mut keys = crate::store::load_data(v)?.keys;
+    for key in &mut keys {
+        if let Some(p) = &key.deployed_path {
+            key.deployed_path = Some(sys::resolve_identity_file(p, &root));
+        }
+    }
+    Ok(keys)
 }
 
 /// 列出 vault 中的身份（需已解锁）。

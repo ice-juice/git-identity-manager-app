@@ -148,6 +148,9 @@ pub fn apply_managed_from_snapshot(home: &str, snapshot: &str) -> String {
 }
 
 /// 多端合并托管 Host：同 alias 以本地为准，对端新增且仍有效的 alias 并入。
+///
+/// 必须在可移植路径空间里合并。本机重写后的绝对路径若参与合并，
+/// 会被当成「本地正文」再上传，覆盖对端机器的路径。
 pub fn merge_managed_prefer_local(
     local: &str,
     remote: &str,
@@ -228,6 +231,36 @@ mod tests {
         let e = ManagedEntry::new("gh", "github.com", "/k/id.pub");
         let out = upsert("", e);
         assert!(out.contains("IdentityFile /k/id.pub"));
+    }
+
+    #[test]
+    fn merge_in_portable_space_does_not_keep_machine_paths() {
+        let local = upsert(
+            "",
+            ManagedEntry::new(
+                "gh-a",
+                "github.com",
+                "D:/dataSpace/gitIdentityData/ssh-keys/id_ed25519_a",
+            ),
+        );
+        let remote = upsert(
+            "",
+            ManagedEntry::new(
+                "gh-a",
+                "github.com",
+                "D:/gitIdentifyData/ssh-keys/id_ed25519_a",
+            ),
+        );
+        let local_p = crate::sys::canonical_ssh_for_sync(&local);
+        let remote_p = crate::sys::canonical_ssh_for_sync(&remote);
+        let keep = std::collections::HashSet::from(["gh-a".into()]);
+        let out = merge_managed_prefer_local(&local_p, &remote_p, &keep);
+        assert_eq!(
+            list(&out)[0].identity_file,
+            "%GAM_WORKSPACE%/ssh-keys/id_ed25519_a"
+        );
+        assert!(!out.contains("dataSpace"));
+        assert!(!out.contains("gitIdentifyData/ssh-keys"));
     }
 
     #[test]

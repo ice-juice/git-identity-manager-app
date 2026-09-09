@@ -4,7 +4,7 @@ use crate::app_config::{self, clamp_auto_sync_minutes};
 use crate::commands::AppState;
 use crate::error::{AppError, Result};
 use crate::sync::backup::{self, BackupSummary};
-use crate::sync::engine::{self, CloudSyncStatus, SnapshotMeta, SyncResult};
+use crate::sync::engine::{self, CloudRestorePreview, CloudSyncStatus, SnapshotMeta, SyncResult};
 use crate::sync::s3::{S3Client, S3Config};
 use serde::Serialize;
 use std::path::Path;
@@ -75,6 +75,18 @@ pub fn save_cloud_sync_config(
 }
 
 #[tauri::command]
+pub fn export_s3_config(dest_path: String, sync_config: S3Config) -> Result<()> {
+    crate::sync::s3::write_s3_config_file(Path::new(&dest_path), &sync_config)
+}
+
+#[tauri::command]
+pub fn import_s3_config(src_path: String) -> Result<S3Config> {
+    let cfg = crate::sync::s3::read_s3_config_file(Path::new(&src_path))?;
+    validate_s3_config(&cfg)?;
+    Ok(cfg)
+}
+
+#[tauri::command]
 pub fn test_cloud_sync_config(sync_config: S3Config) -> Result<u128> {
     let client = S3Client::new(sync_config)?;
     client.test_connection()
@@ -102,6 +114,7 @@ pub fn get_cloud_sync_status(state: State<AppState>) -> Result<CloudSyncStatus> 
                 local_key_count: data.keys.len(),
                 local_repo_count: data.repos.len(),
                 status: "unconfigured".into(),
+                header_ready: false,
             });
         }
     };
@@ -213,4 +226,70 @@ pub fn restore_cloud_snapshot(state: State<AppState>, snapshot_id: String) -> Re
 #[tauri::command]
 pub fn run_auto_sync_now(app: AppHandle) -> Result<Option<SyncResult>> {
     crate::sync::scheduler::run(&app, "manual")
+}
+
+fn validate_s3_config(cfg: &S3Config) -> Result<()> {
+    if cfg.endpoint.trim().is_empty()
+        || cfg.bucket.trim().is_empty()
+        || cfg.access_key_id.trim().is_empty()
+        || cfg.secret_access_key.trim().is_empty()
+    {
+        return Err(AppError::Invalid(
+            "请填写完整的 Endpoint、Bucket、Access Key 与 Secret Key".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// 新设备：用恢复密钥验证云端工作空间并预览资产（不落盘）。
+#[tauri::command]
+pub fn preview_cloud_restore(
+    sync_config: S3Config,
+    recovery_key: String,
+) -> Result<CloudRestorePreview> {
+    validate_s3_config(&sync_config)?;
+    if recovery_key.trim().is_empty() {
+        return Err(AppError::Invalid("请输入恢复密钥".into()));
+    }
+    let client = S3Client::new(sync_config)?;
+    engine::preview_cloud_restore(&client, &recovery_key)
+}
+
+/// 新设备：用恢复密钥重建工作空间并拉取云端数据，再设置本机访问密码。
+#[tauri::command]
+pub fn restore_from_cloud(
+    app: AppHandle,
+    state: State<AppState>,
+    path: String,
+    password: String,
+    recovery_key: String,
+    sync_config: S3Config,
+    include_repos: Option<bool>,
+) -> Result<SyncResult> {
+    validate_s3_config(&sync_config)?;
+    if path.trim().is_empty() {
+        return Err(AppError::Invalid("请选择工作空间目录".into()));
+    }
+    if password.len() < 8 {
+        return Err(AppError::Invalid("访问密码至少 8 位".into()));
+    }
+    if recovery_key.trim().is_empty() {
+        return Err(AppError::Invalid("请输入恢复密钥".into()));
+    }
+    let root = std::path::PathBuf::from(&path);
+    if crate::vault::Vault::exists(&root) {
+        return Err(AppError::AlreadyInitialized(path));
+    }
+
+    let client = S3Client::new(sync_config.clone())?;
+    let (vault, result) = engine::restore_from_cloud(
+        &root,
+        &password,
+        &recovery_key,
+        &client,
+        include_repos.unwrap_or(false),
+    )?;
+    crate::commands::vault::adopt_unlocked_vault(&state, vault, path, Some(sync_config))?;
+    crate::commands::vault::schedule_after_unlock(app);
+    Ok(result)
 }

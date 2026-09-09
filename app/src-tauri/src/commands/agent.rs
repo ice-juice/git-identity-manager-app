@@ -1,19 +1,23 @@
-//! M4 命令层：agent 状态/加载/卸载/清空、免提权 fallback、解锁后自动加载。
+//! M4 命令层：agent 状态/加载/卸载/清空、Git agent 统一环境、解锁后自动加载。
 
-use crate::agent::{self, AgentKeyResolved};
+use crate::agent::{self, unify, AgentKeyResolved};
 use crate::commands::AppState;
 use crate::error::{AppError, Result};
 use crate::store;
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStatus {
     pub running: bool,
-    /// 当前走的是服务态还是免提权 fallback。
+    /// 当前走的是 Git 自带 ssh-agent（带 SSH_AUTH_SOCK）。
     pub using_fallback: bool,
+    pub ssh: Option<String>,
+    pub ssh_add: Option<String>,
+    pub auth_sock: Option<String>,
     pub keys: Vec<AgentKeyResolved>,
+    pub unify: unify::AgentUnifyStatus,
 }
 
 /// 查询 agent 状态并按指纹反查身份。
@@ -21,13 +25,18 @@ pub struct AgentStatus {
 pub fn agent_status(state: State<AppState>) -> Result<AgentStatus> {
     let env = state.agent_env.lock().unwrap().clone();
     let using_fallback = env.auth_sock.is_some();
+    let unify_status = unify::inspect(&env);
     let agent_keys = match agent::list(&env) {
         Ok(k) => k,
         Err(_) => {
             return Ok(AgentStatus {
                 running: false,
                 using_fallback,
+                ssh: env.ssh.clone(),
+                ssh_add: env.ssh_add.clone(),
+                auth_sock: env.auth_sock.clone(),
                 keys: vec![],
+                unify: unify_status,
             })
         }
     };
@@ -50,28 +59,59 @@ pub fn agent_status(state: State<AppState>) -> Result<AgentStatus> {
     Ok(AgentStatus {
         running: true,
         using_fallback,
+        ssh: env.ssh.clone(),
+        ssh_add: env.ssh_add.clone(),
+        auth_sock: env.auth_sock.clone(),
         keys: resolved,
+        unify: unify_status,
     })
 }
 
-/// 确保 agent 可用：先探测 Windows OpenSSH，不行则启动 Git 自带 ssh-agent。
+/// 确保 Git 自带 ssh-agent 可用。
 #[tauri::command]
 pub fn agent_ensure(state: State<AppState>) -> Result<AgentStatus> {
     ready_env(&state)?;
     agent_status(state)
 }
 
-/// 复用已就绪的 agent；否则启动系统或 Git ssh-agent 并写回状态。
+/// 复用已就绪的 Git agent；否则启动并写回状态。
 fn ready_env(state: &State<AppState>) -> Result<crate::agent::AgentEnv> {
     {
         let env = state.agent_env.lock().unwrap().clone();
-        if agent::is_ready(&env) {
+        if env.auth_sock.is_some() && agent::is_ready(&env) {
             return Ok(env);
         }
     }
     let env = agent::ensure()?;
     *state.agent_env.lock().unwrap() = env.clone();
     Ok(env)
+}
+
+/// 启动时只拉起 Git ssh-agent，不改用户环境变量（写入必须经前端二次确认）。
+pub fn bootstrap_git_agent(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    match agent::ensure() {
+        Ok(env) => {
+            *state.agent_env.lock().unwrap() = env.clone();
+            log::info!(
+                "Git ssh-agent 已就绪：sock={}",
+                env.auth_sock.as_deref().unwrap_or("-")
+            );
+        }
+        Err(e) => log::warn!("启动 Git ssh-agent 失败：{e}"),
+    }
+}
+
+/// 写入 git config / 用户环境 / 终端 profile。`confirmed` 必须为 true。
+#[tauri::command]
+pub fn agent_unify_env(state: State<AppState>, confirmed: bool) -> Result<unify::AgentUnifyReport> {
+    if !confirmed {
+        return Err(AppError::Invalid(
+            "未确认写入用户环境，已取消。不会修改系统环境变量。".into(),
+        ));
+    }
+    let env = ready_env(&state)?;
+    unify::apply(&env)
 }
 
 /// 加载单把密钥。

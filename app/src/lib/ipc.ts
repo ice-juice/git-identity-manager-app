@@ -113,10 +113,51 @@ export interface AgentKeyResolved {
   identityName: string | null;
   keyName: string | null;
 }
+export interface EnvCheck {
+  key: string;
+  label: string;
+  ok: boolean;
+  current: string | null;
+  expected: string | null;
+}
+export interface AgentUnifyStatus {
+  gitInstalled: boolean;
+  agentRunning: boolean;
+  gitSsh: string | null;
+  sshAdd: string | null;
+  authSock: string | null;
+  agentPid: string | null;
+  gitConfigOk: boolean;
+  userGitSshOk: boolean;
+  userSockOk: boolean;
+  powershellProfileOk: boolean;
+  bashProfileOk: boolean;
+  aligned: boolean;
+  gitConfigValue: string | null;
+  userGitSsh: string | null;
+  userAuthSock: string | null;
+  checks: EnvCheck[];
+}
+export interface AgentUnifyReport {
+  gitSsh: string;
+  sshAdd: string;
+  authSock: string;
+  agentPid: string | null;
+  gitConfig: boolean;
+  userEnv: boolean;
+  powershellProfile: boolean;
+  bashProfile: boolean;
+  steps: string[];
+  hint: string;
+}
 export interface AgentStatus {
   running: boolean;
   usingFallback: boolean;
+  ssh: string | null;
+  sshAdd: string | null;
+  authSock: string | null;
   keys: AgentKeyResolved[];
+  unify: AgentUnifyStatus;
 }
 export interface Candidate {
   identityId: string;
@@ -257,6 +298,7 @@ export interface CloudSyncStatus {
   localKeyCount: number;
   localRepoCount: number;
   status: "synced" | "local_ahead" | "remote_ahead" | "not_synced" | "different_workspace" | "unconfigured";
+  headerReady?: boolean;
 }
 
 export interface SyncResult {
@@ -286,6 +328,15 @@ export interface CloudSnapshot {
   isDailyFirst?: boolean;
 }
 
+export interface CloudRestorePreview {
+  workspaceId: string;
+  updatedAt?: string | null;
+  identityCount: number;
+  keyCount: number;
+  repoCount: number;
+  hasManifest: boolean;
+}
+
 // ---- 命令 ----
 export const api = {
   // vault
@@ -301,6 +352,8 @@ export const api = {
   vaultTryGraceUnlock: () => invoke<boolean>("vault_try_grace_unlock"),
   setLaunchAtLogin: (enabled: boolean) => invoke<void>("set_launch_at_login", { enabled }),
   setGraceDays: (days: number) => invoke<void>("set_grace_days", { days }),
+  factoryReset: (confirmed: boolean, confirmPhrase: string) =>
+    invoke<{ steps: string[] }>("factory_reset", { confirmed, confirmPhrase }),
   applyCloseChoice: (action: "tray" | "quit" | "cancel", remember: boolean) =>
     invoke<void>("apply_close_choice", { action, remember }),
   getClosePreference: () => invoke<"tray" | "quit" | null>("get_close_preference"),
@@ -350,6 +403,7 @@ export const api = {
   // agent (M4)
   agentStatus: () => invoke<AgentStatus>("agent_status"),
   agentEnsure: () => invoke<AgentStatus>("agent_ensure"),
+  agentUnifyEnv: (confirmed: boolean) => invoke<AgentUnifyReport>("agent_unify_env", { confirmed }),
   agentLoad: (keyId: string) => invoke<void>("agent_load", { keyId }),
   agentLoadIdentity: (identityId: string) => invoke<void>("agent_load_identity", { identityId }),
   agentLoadAll: () => invoke<number>("agent_load_all"),
@@ -391,6 +445,9 @@ export const api = {
   getCloudSyncConfig: () => invoke<S3Config | null>("get_cloud_sync_config"),
   saveCloudSyncConfig: (syncConfig: S3Config | null) =>
     invoke<void>("save_cloud_sync_config", { syncConfig }),
+  exportS3Config: (destPath: string, syncConfig: S3Config) =>
+    invoke<void>("export_s3_config", { destPath, syncConfig }),
+  importS3Config: (srcPath: string) => invoke<S3Config>("import_s3_config", { srcPath }),
   testCloudSyncConfig: (syncConfig: S3Config) =>
     invoke<number>("test_cloud_sync_config", { syncConfig }),
   getCloudSyncStatus: () => invoke<CloudSyncStatus>("get_cloud_sync_status"),
@@ -402,6 +459,15 @@ export const api = {
   restoreCloudSnapshot: (snapshotId: string) =>
     invoke<SyncResult>("restore_cloud_snapshot", { snapshotId }),
   runAutoSyncNow: () => invoke<SyncResult | null>("run_auto_sync_now"),
+  previewCloudRestore: (syncConfig: S3Config, recoveryKey: string) =>
+    invoke<CloudRestorePreview>("preview_cloud_restore", { syncConfig, recoveryKey }),
+  restoreFromCloud: (args: {
+    path: string;
+    password: string;
+    recoveryKey: string;
+    syncConfig: S3Config;
+    includeRepos?: boolean;
+  }) => invoke<SyncResult>("restore_from_cloud", args),
 };
 
 export function errMessage(e: unknown): string {

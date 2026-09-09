@@ -2,6 +2,7 @@
 //!
 //! 加载走 M0 验证的路径：在 Rust 侧解密私钥 → 经 stdin 喂给 `ssh-add -`，
 //! 私钥明文全程不落盘。列表按指纹反查身份（原生命令只给指纹）。
+//! 本机统一使用 Git 自带 ssh-agent（与 Windows OpenSSH 服务隔离）。
 
 use crate::error::{AppError, Result};
 use crate::model::{Identity, KeyRecord};
@@ -11,6 +12,8 @@ use crate::sys;
 use crate::vault::Vault;
 use serde::Serialize;
 use std::path::PathBuf;
+
+pub mod unify;
 
 /// agent 中的一把 key（来自 `ssh-add -l`）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -111,24 +114,65 @@ fn ssh_exe_name(name: &str) -> String {
     }
 }
 
-fn system_ssh() -> Option<PathBuf> {
-    sibling_of("system", &ssh_exe_name("ssh"))
-}
-
 fn system_ssh_add() -> Option<PathBuf> {
     sibling_of("system", &ssh_exe_name("ssh-add"))
 }
 
-fn git_ssh() -> Option<PathBuf> {
+pub(crate) fn git_ssh_bin() -> Option<PathBuf> {
     sibling_of("git", &ssh_exe_name("ssh"))
 }
 
-fn git_ssh_add() -> Option<PathBuf> {
+pub(crate) fn git_ssh_add_bin() -> Option<PathBuf> {
     sibling_of("git", &ssh_exe_name("ssh-add"))
+}
+
+fn git_ssh() -> Option<PathBuf> {
+    git_ssh_bin()
+}
+
+fn git_ssh_add() -> Option<PathBuf> {
+    git_ssh_add_bin()
 }
 
 fn git_ssh_agent() -> Option<PathBuf> {
     sibling_of("git", &ssh_exe_name("ssh-agent"))
+}
+
+/// 固定套接字，供终端与本进程共用同一只 Git ssh-agent。
+pub fn stable_git_sock_path() -> PathBuf {
+    sys::home_dir().join(".ssh").join("agent").join("git-account-manager")
+}
+
+fn stable_git_pid_path() -> PathBuf {
+    sys::home_dir().join(".ssh").join("agent").join("git-account-manager.pid")
+}
+
+fn persist_git_agent_meta(env: &AgentEnv) {
+    if let Some(pid) = &env.agent_pid {
+        if let Some(parent) = stable_git_pid_path().parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(stable_git_pid_path(), pid);
+    }
+}
+
+fn read_stable_pid() -> Option<String> {
+    let raw = std::fs::read_to_string(stable_git_pid_path()).ok()?;
+    let pid = raw.trim();
+    if pid.is_empty() {
+        None
+    } else {
+        Some(pid.to_string())
+    }
+}
+
+fn git_agent_env(sock: String, pid: Option<String>) -> Option<AgentEnv> {
+    Some(AgentEnv {
+        auth_sock: Some(sock),
+        agent_pid: pid.or_else(read_stable_pid),
+        ssh_add: Some(git_ssh_add()?.display().to_string()),
+        ssh: Some(git_ssh()?.display().to_string()),
+    })
 }
 
 /// 解析 ssh-add 可执行路径（与所选 ssh 同目录），退回 PATH 中的 `ssh-add`。
@@ -235,15 +279,6 @@ pub fn ssh_bin(env: &AgentEnv) -> String {
     env.ssh.clone().unwrap_or_else(|| "ssh".into())
 }
 
-fn system_env() -> AgentEnv {
-    AgentEnv {
-        auth_sock: None,
-        agent_pid: None,
-        ssh_add: system_ssh_add().map(|p| p.display().to_string()),
-        ssh: system_ssh().map(|p| p.display().to_string()),
-    }
-}
-
 /// 当前 env 能否列出密钥（空 identities 也算 agent 已运行）。
 pub fn is_ready(env: &AgentEnv) -> bool {
     list(env).is_ok()
@@ -257,22 +292,13 @@ fn is_agent_unreachable(hint: &str) -> bool {
         || h.contains("error connecting to agent")
 }
 
-/// 先探测 Windows OpenSSH 服务，不通再复用/启动 Git 自带 ssh-agent。
+/// 统一使用 Git 自带 ssh-agent：先复用固定套接字，没有再启动。
 pub fn ensure() -> Result<AgentEnv> {
-    // 不在解锁路径上执行 `sc start`：服务被禁用时会卡住很久，看起来像崩溃。
-    if let Ok(env) = probe_system_agent() {
-        return Ok(env);
-    }
     if let Some(env) = probe_existing_git_agent() {
+        persist_git_agent_meta(&env);
         return Ok(env);
     }
     start_git_agent()
-}
-
-fn probe_system_agent() -> Result<AgentEnv> {
-    let env = system_env();
-    list(&env)?;
-    Ok(env)
 }
 
 /// 把 Windows 路径转成 Git/MSYS 的 `SSH_AUTH_SOCK` 形式：`C:\Users\a` → `/c/Users/a`。
@@ -287,11 +313,13 @@ pub fn to_msys_sock_path(path: &std::path::Path) -> String {
 }
 
 fn probe_existing_git_agent() -> Option<AgentEnv> {
-    let add = git_ssh_add()?;
-    let ssh = git_ssh()?;
     let mut socks = Vec::new();
+    let stable = stable_git_sock_path();
+    if stable.exists() {
+        socks.push(to_msys_sock_path(&stable));
+    }
     if let Ok(existing) = std::env::var("SSH_AUTH_SOCK") {
-        if !existing.trim().is_empty() {
+        if !existing.trim().is_empty() && !socks.contains(&existing) {
             socks.push(existing);
         }
     }
@@ -299,20 +327,22 @@ fn probe_existing_git_agent() -> Option<AgentEnv> {
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for entry in rd.flatten() {
             let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("pid") {
+                continue;
+            }
             if p.exists() {
-                socks.push(to_msys_sock_path(&p));
+                let sock = to_msys_sock_path(&p);
+                if !socks.contains(&sock) {
+                    socks.push(sock);
+                }
             }
         }
     }
     for sock in socks {
-        let env = AgentEnv {
-            auth_sock: Some(sock),
-            agent_pid: None,
-            ssh_add: Some(add.display().to_string()),
-            ssh: Some(ssh.display().to_string()),
-        };
-        if list(&env).is_ok() {
-            return Some(env);
+        if let Some(env) = git_agent_env(sock, None) {
+            if list(&env).is_ok() {
+                return Some(env);
+            }
         }
     }
     None
@@ -344,30 +374,59 @@ fn run_ssh_add(env: &AgentEnv, args: &[&str], stdin: Option<&[u8]>) -> Result<(S
     ))
 }
 
-/// 启动 Git 自带 ssh-agent 作为普通用户进程（免提权 fallback），解析其输出的 sock/pid。
+/// 启动 Git 自带 ssh-agent，并绑到 `~/.ssh/agent/git-account-manager`。
 pub fn start_git_agent() -> Result<AgentEnv> {
-    let ssh = git_ssh().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh".into()))?;
-    let exe = git_ssh_agent().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-agent".into()))?;
-    let add = git_ssh_add().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-add".into()))?;
-    let (out, err, code) = sys::run(&exe.display().to_string(), &["-s"])?;
+    let ssh = git_ssh().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh。请先安装 Git for Windows。".into()))?;
+    let exe = git_ssh_agent().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-agent。请先安装 Git for Windows。".into()))?;
+    let add = git_ssh_add().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-add。请先安装 Git for Windows。".into()))?;
+    let sock_dir = sys::home_dir().join(".ssh").join("agent");
+    std::fs::create_dir_all(&sock_dir).map_err(|e| AppError::Io(e.to_string()))?;
+    let sock_path = stable_git_sock_path();
+    let sock_msys = to_msys_sock_path(&sock_path);
+    if sock_path.exists() {
+        if let Some(env) = git_agent_env(sock_msys.clone(), None) {
+            if list(&env).is_ok() {
+                persist_git_agent_meta(&env);
+                return Ok(env);
+            }
+        }
+        let _ = std::fs::remove_file(&sock_path);
+    }
+    let exe_s = exe.display().to_string();
+    let (out, err, code) = sys::run(&exe_s, &["-a", &sock_msys, "-s"])?;
     let mut env = parse_agent_env(&out);
     if env.auth_sock.is_none() {
         env = parse_agent_env(&err);
     }
     if env.auth_sock.is_none() {
-        let detail = if !err.trim().is_empty() { err } else { out };
-        return Err(AppError::Other(format!(
-            "启动 Git ssh-agent 失败（exit {code}）：{}",
-            detail.trim()
-        )));
+        // 个别 Git 版本不认 -a 时退回默认启动（套接字可能在 /tmp，终端不易复用）。
+        let (out2, err2, code2) = sys::run(&exe_s, &["-s"])?;
+        env = parse_agent_env(&out2);
+        if env.auth_sock.is_none() {
+            env = parse_agent_env(&err2);
+        }
+        if env.auth_sock.is_none() {
+            let detail = [err, out, err2, out2]
+                .into_iter()
+                .find(|s| !s.trim().is_empty())
+                .unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "启动 Git ssh-agent 失败（exit {code}/{code2}）：{}",
+                detail.trim()
+            )));
+        }
     }
     env.ssh_add = Some(add.display().to_string());
     env.ssh = Some(ssh.display().to_string());
+    if env.auth_sock.is_none() {
+        env.auth_sock = Some(sock_msys);
+    }
     if list(&env).is_err() {
         return Err(AppError::Other(
             "已启动 Git ssh-agent，但配套 ssh-add 仍连不上。请确认已安装 Git for Windows。".into(),
         ));
     }
+    persist_git_agent_meta(&env);
     Ok(env)
 }
 

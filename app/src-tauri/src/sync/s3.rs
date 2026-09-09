@@ -353,3 +353,69 @@ fn extract_s3_error(xml: &str) -> String {
         xml.chars().take(120).collect()
     }
 }
+
+pub const S3_CONFIG_FILE_KIND: &str = "git-account-manager-s3";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3ConfigFile {
+    pub kind: String,
+    pub version: u32,
+    pub config: S3Config,
+}
+
+pub fn write_s3_config_file(path: &std::path::Path, config: &S3Config) -> Result<()> {
+    let payload = S3ConfigFile {
+        kind: S3_CONFIG_FILE_KIND.into(),
+        version: 1,
+        config: config.clone(),
+    };
+    let json = serde_json::to_vec_pretty(&payload)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::vault::atomic_write(path, &json)
+}
+
+pub fn read_s3_config_file(path: &std::path::Path) -> Result<S3Config> {
+    let raw = std::fs::read_to_string(path).map_err(|e| AppError::Io(format!("读取配置文件失败：{e}")))?;
+    parse_s3_config_file(&raw)
+}
+
+pub fn parse_s3_config_file(raw: &str) -> Result<S3Config> {
+    if let Ok(file) = serde_json::from_str::<S3ConfigFile>(raw) {
+        if file.kind != S3_CONFIG_FILE_KIND && !file.kind.is_empty() {
+            return Err(AppError::Invalid("这不是本程序导出的 S3/R2 配置文件".into()));
+        }
+        return Ok(file.config);
+    }
+    serde_json::from_str::<S3Config>(raw)
+        .map_err(|_| AppError::Invalid("无法解析 S3/R2 配置文件".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_wrapped_and_raw_s3_config() {
+        let cfg = S3Config {
+            endpoint: "https://example.r2.cloudflarestorage.com".into(),
+            bucket: "b".into(),
+            region: "auto".into(),
+            access_key_id: "ak".into(),
+            secret_access_key: "sk".into(),
+            prefix: "gam-sync/".into(),
+        };
+        let wrapped = serde_json::to_string(&S3ConfigFile {
+            kind: S3_CONFIG_FILE_KIND.into(),
+            version: 1,
+            config: cfg.clone(),
+        })
+        .unwrap();
+        let got = parse_s3_config_file(&wrapped).unwrap();
+        assert_eq!(got.bucket, "b");
+        let raw = serde_json::to_string(&cfg).unwrap();
+        assert_eq!(parse_s3_config_file(&raw).unwrap().access_key_id, "ak");
+    }
+}
