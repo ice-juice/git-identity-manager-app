@@ -503,10 +503,21 @@ mod tests {
 
     #[test]
     fn normalize_repo_path_unifies_slash_and_case() {
-        let a = normalize_repo_path(r"D:\Work\Repo\");
-        let b = normalize_repo_path("d:/work/repo");
-        assert_eq!(a, b);
+        let slashes = normalize_repo_path(r"D:\Work\Repo\");
+        assert_eq!(slashes, normalize_repo_path("D:/Work/Repo"));
         assert_eq!(display_repo_name(r"D:\Work\demo-app"), "demo-app");
+        #[cfg(windows)]
+        {
+            assert_eq!(slashes, normalize_repo_path("d:/work/repo"));
+        }
+        #[cfg(not(windows))]
+        {
+            assert_ne!(
+                normalize_repo_path(r"D:\Work\Repo\"),
+                normalize_repo_path("d:/work/repo"),
+                "Unix 路径大小写敏感，不应折叠"
+            );
+        }
     }
 
     #[test]
@@ -528,7 +539,7 @@ mod tests {
             &mut repos,
             ManagedRepo {
                 id: "r2".into(),
-                path: "d:/work/app".into(),
+                path: "D:/Work/App".into(),
                 name: "App".into(),
                 remote_url: Some("git@github-x:o/r.git".into()),
                 identity_id: Some("i1".into()),
@@ -541,5 +552,39 @@ mod tests {
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].identity_id.as_deref(), Some("i1"));
         assert_eq!(repos[0].remote_url.as_deref(), Some("git@github-x:o/r.git"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn upsert_managed_repo_treats_windows_case_as_same() {
+        let mut repos = Vec::new();
+        let (is_new, _) = upsert_managed_repo(
+            &mut repos,
+            ManagedRepo {
+                id: "r1".into(),
+                path: r"D:\Work\App".into(),
+                name: "App".into(),
+                remote_url: None,
+                identity_id: None,
+                added_at: "t1".into(),
+                source: "scan".into(),
+            },
+        );
+        assert!(is_new);
+        let (is_new, id) = upsert_managed_repo(
+            &mut repos,
+            ManagedRepo {
+                id: "r2".into(),
+                path: "d:/work/app".into(),
+                name: "App".into(),
+                remote_url: Some("git@github-x:o/r.git".into()),
+                identity_id: Some("i1".into()),
+                added_at: "t2".into(),
+                source: "clone".into(),
+            },
+        );
+        assert!(!is_new);
+        assert_eq!(id, "r1");
+        assert_eq!(repos.len(), 1);
     }
 }
