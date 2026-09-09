@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, errMessage } from "../lib/ipc";
+import { getVersion } from "@tauri-apps/api/app";
+import { api, errMessage, type UpdateCheckResult, type UpdateSource } from "../lib/ipc";
 import { useApp } from "../store";
 import { THEME_OPTIONS } from "../lib/theme";
 import { PageHead, Card, FieldLabel } from "../ui/common";
@@ -212,6 +213,303 @@ function FactoryResetPanel({ onDone }: { onDone: () => Promise<void> }) {
   );
 }
 
+const DEFAULT_UPDATE_REPO = "ice-juice/git-identity-manager-app";
+
+function formatWhen(iso: string | null | undefined): string {
+  if (!iso) return "尚未检查";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
+function AboutUpdateCard() {
+  const [version, setVersion] = useState("");
+  const [lastCheck, setLastCheck] = useState<string | null>(null);
+  const [kind, setKind] = useState<UpdateSource["kind"]>("github");
+  const [repo, setRepo] = useState("");
+  const [manifestUrl, setManifestUrl] = useState("");
+  const [includePrerelease, setIncludePrerelease] = useState(false);
+  const [autoCheck, setAutoCheck] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [result, setResult] = useState<UpdateCheckResult | null>(null);
+
+  async function loadPrefs() {
+    const [src, last, auto] = await Promise.all([
+      api.getUpdateSource(),
+      api.getLastUpdateCheck(),
+      api.getAutoCheckUpdate(),
+    ]);
+    setKind(src.kind === "manifest" ? "manifest" : "github");
+    setRepo(src.repo ?? "");
+    setManifestUrl(src.manifestUrl ?? "");
+    setIncludePrerelease(!!src.includePrerelease);
+    setLastCheck(last);
+    setAutoCheck(auto);
+  }
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion("1.1.0"));
+    loadPrefs().catch((e) => setErr(errMessage(e)));
+  }, []);
+
+  function currentSource(): UpdateSource {
+    if (kind === "manifest") {
+      return { kind: "manifest", manifestUrl: manifestUrl.trim(), includePrerelease: false };
+    }
+    return {
+      kind: "github",
+      repo: repo.trim() || undefined,
+      includePrerelease,
+    };
+  }
+
+  async function saveSource() {
+    setErr("");
+    setMsg("");
+    setBusy(true);
+    try {
+      await api.saveUpdateSource(currentSource());
+      await loadPrefs();
+      setMsg("更新源已保存");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreDefault() {
+    setErr("");
+    setMsg("");
+    setBusy(true);
+    try {
+      await api.saveUpdateSource(null);
+      await loadPrefs();
+      setKind("github");
+      setRepo("");
+      setManifestUrl("");
+      setIncludePrerelease(false);
+      setMsg("已恢复为默认 GitHub 更新源");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleAuto(enabled: boolean) {
+    setErr("");
+    setBusy(true);
+    try {
+      await api.setAutoCheckUpdate(enabled);
+      setAutoCheck(enabled);
+      setMsg(enabled ? "已开启启动时自动检查更新" : "已关闭启动时自动检查更新");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkNow() {
+    setErr("");
+    setMsg("");
+    setChecking(true);
+    try {
+      const r = await api.checkUpdate();
+      setResult(r);
+      setVersion(r.currentVersion);
+      setLastCheck(await api.getLastUpdateCheck());
+      setMsg(r.available ? `发现新版本 ${r.latestVersion}` : "当前已是最新版本，或远端尚未发布更新清单");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function install() {
+    setErr("");
+    setMsg("");
+    setInstalling(true);
+    try {
+      await api.downloadAndInstallUpdate();
+      setMsg("更新已安装，即将重启…");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  async function skip() {
+    const ver = result?.latestVersion;
+    if (!ver) return;
+    setErr("");
+    setBusy(true);
+    try {
+      await api.skipUpdateVersion(ver);
+      setMsg(`已跳过版本 ${ver}，启动时不再提示`);
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const showInstall = !!result?.available && result.selfUpdateSupported;
+  const showManualOnly = !!result?.available && !result.selfUpdateSupported;
+
+  return (
+    <Card title="关于与更新">
+      <div className="stack">
+        {err && <div className="err-text">{err}</div>}
+        {msg && <div className="callout info">{msg}</div>}
+        <div className="kv">
+          <span className="muted">当前版本</span>
+          <span className="mono">{version || "—"}</span>
+        </div>
+        <div className="kv">
+          <span className="muted">最近检查</span>
+          <span>{formatWhen(lastCheck)}</span>
+        </div>
+        <div className="kv">
+          <span className="muted">运行平台</span>
+          <span className="mono">{result?.platform ?? "检查后显示"}</span>
+        </div>
+        <div>
+          <button type="button" className="btn primary sm" disabled={checking || busy} onClick={checkNow}>
+            {checking ? "正在检查…" : "立即检查更新"}
+          </button>
+        </div>
+
+        {result?.available && (
+          <div className="callout info update-result">
+            <div>
+              <strong>新版本 {result.latestVersion}</strong>
+              {result.pubDate ? ` · ${formatWhen(result.pubDate)}` : ""}
+            </div>
+            {result.notes && (
+              <pre className="update-notes">{result.notes}</pre>
+            )}
+            {showManualOnly && (
+              <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+                当前安装方式不支持应用内更新（例如 Linux 非 AppImage），请使用手动下载。
+              </div>
+            )}
+            <div className="row" style={{ flexWrap: "wrap", marginTop: 8 }}>
+              {showInstall && (
+                <button type="button" className="btn primary sm" disabled={installing} onClick={install}>
+                  {installing ? "正在下载安装…" : "下载并安装"}
+                </button>
+              )}
+              <button type="button" className="btn sm" disabled={busy} onClick={skip}>
+                跳过此版本
+              </button>
+              {result.downloadUrl && (
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  onClick={() => api.openUrl(result.downloadUrl!)}
+                >
+                  手动下载
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="field">
+          <div className="between">
+            <div>
+              <FieldLabel name="自动检查更新" tip="解锁后约 5 秒静默检查一次。发现新版本且未被跳过时，右下角提示。" />
+              <div className="hint">关闭后仍可手动检查。</div>
+            </div>
+            <button
+              type="button"
+              className={"switch" + (autoCheck ? "" : " off")}
+              disabled={busy}
+              onClick={() => toggleAuto(!autoCheck)}
+            />
+          </div>
+        </div>
+
+        <div className="field">
+          <FieldLabel name="更新源" tip="默认使用内置 GitHub 仓库。也可改成其它仓库，或填写一份静态 latest.json 的 HTTPS 地址（内网镜像 / 其它 Git 平台）。无论何种源，安装包都必须通过内置公钥校验。" />
+          <div className="choice-row">
+            <button
+              type="button"
+              className={"choice" + (kind === "github" ? " on" : "")}
+              onClick={() => setKind("github")}
+            >
+              GitHub 仓库
+            </button>
+            <button
+              type="button"
+              className={"choice" + (kind === "manifest" ? " on" : "")}
+              onClick={() => setKind("manifest")}
+            >
+              自定义清单 URL
+            </button>
+          </div>
+        </div>
+
+        {kind === "github" ? (
+          <>
+            <div className="field">
+              <label className="field-label">仓库 owner/repo</label>
+              <input
+                className="input mono"
+                placeholder={DEFAULT_UPDATE_REPO}
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+              />
+              <div className="hint">留空则使用出厂默认仓库 {DEFAULT_UPDATE_REPO}</div>
+            </div>
+            <div className="field">
+              <div className="between">
+                <FieldLabel name="包含预发布版本" tip="开启后走 GitHub Releases API，可能包含 pre-release。" />
+                <button
+                  type="button"
+                  className={"switch" + (includePrerelease ? "" : " off")}
+                  disabled={busy}
+                  onClick={() => setIncludePrerelease(!includePrerelease)}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="field">
+            <label className="field-label">清单 URL</label>
+            <input
+              className="input mono"
+              placeholder="https://mirror.example.com/latest.json"
+              value={manifestUrl}
+              onChange={(e) => setManifestUrl(e.target.value)}
+            />
+            <div className="hint">必须是 HTTPS。支持 {"{{target}}"} / {"{{arch}}"} / {"{{current_version}}"} 占位符。</div>
+          </div>
+        )}
+
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <button type="button" className="btn primary sm" disabled={busy} onClick={saveSource}>
+            保存更新源
+          </button>
+          <button type="button" className="btn ghost sm" disabled={busy} onClick={restoreDefault}>
+            恢复默认
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function formatExpiry(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -304,6 +602,8 @@ export function Settings() {
       <PageHead title="设置" desc="工作空间安全与账户配置" />
       {err && <div className="err-text">{err}</div>}
       {msg && <div className="callout info">{msg}</div>}
+
+      <AboutUpdateCard />
 
       <Card title="界面主题与风格">
         <div className="stack">

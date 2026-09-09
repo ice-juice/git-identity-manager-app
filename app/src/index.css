@@ -511,6 +511,45 @@ textarea.input { resize: vertical; min-height: 56px; }
 .callout.danger { background: var(--red-soft); color: var(--red); border-color: rgba(239, 68, 68, 0.2); }
 .callout.good { background: var(--green-soft); color: var(--green); border-color: rgba(16, 185, 129, 0.2); }
 .callout.sm { padding: 3px 5px; font-size: 10.5px; }
+.callout.update-result { display: block; padding: 10px 12px; }
+.update-notes {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 180px;
+  overflow: auto;
+  width: 100%;
+  font-family: inherit;
+}
+.update-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  width: min(360px, calc(100vw - 24px));
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px 14px;
+}
+.update-toast-title { font-weight: 650; font-size: 13px; }
+.update-progress {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--border);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.update-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-gradient);
+  border-radius: inherit;
+}
 
 .code, .code-block {
   background: var(--code-bg); color: var(--text); border-radius: 5px; padding: 6px 8px;

@@ -15,6 +15,7 @@ pub mod store;
 pub mod sync;
 pub mod sys;
 pub mod tray;
+pub mod update;
 pub mod util;
 pub mod vault;
 
@@ -27,6 +28,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::vault::vault_status,
@@ -107,10 +110,19 @@ pub fn run() {
             commands::window::apply_close_choice,
             commands::window::get_close_preference,
             commands::window::clear_close_preference,
+            commands::update::get_update_source,
+            commands::update::save_update_source,
+            commands::update::get_auto_check_update,
+            commands::update::set_auto_check_update,
+            commands::update::check_update,
+            commands::update::download_and_install_update,
+            commands::update::skip_update_version,
+            commands::update::get_last_update_check,
         ])
         .setup(|app| {
             tray::install(app.handle())?;
             crate::sync::scheduler::start(app.handle().clone());
+            crate::update::scheduler::start(app.handle().clone());
             commands::agent::bootstrap_git_agent(app.handle());
             Ok(())
         })

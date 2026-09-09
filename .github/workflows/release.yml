@@ -104,6 +104,19 @@ jobs:
             libssl-dev \
             libxdo-dev
 
+      - name: Require updater signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]]; then
+            echo "::error::缺少 Secrets.TAURI_SIGNING_PRIVATE_KEY，createUpdaterArtifacts 无法签名"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]]; then
+            echo "::error::缺少 Secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            exit 1
+          fi
+
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci

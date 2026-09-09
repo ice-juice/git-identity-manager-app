@@ -337,6 +337,31 @@ export interface CloudRestorePreview {
   hasManifest: boolean;
 }
 
+export interface UpdateSource {
+  kind: "github" | "manifest";
+  repo?: string;
+  manifestUrl?: string;
+  includePrerelease: boolean;
+}
+
+export interface UpdateCheckResult {
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  notes: string | null;
+  pubDate: string | null;
+  source: UpdateSource;
+  downloadUrl: string | null;
+  platform: string;
+  selfUpdateSupported: boolean;
+}
+
+export interface UpdateProgress {
+  phase: "started" | "downloading" | "finished";
+  downloaded: number;
+  total: number | null;
+}
+
 // ---- 命令 ----
 export const api = {
   // vault
@@ -461,13 +486,23 @@ export const api = {
   runAutoSyncNow: () => invoke<SyncResult | null>("run_auto_sync_now"),
   previewCloudRestore: (syncConfig: S3Config, recoveryKey: string) =>
     invoke<CloudRestorePreview>("preview_cloud_restore", { syncConfig, recoveryKey }),
-  restoreFromCloud: (args: {
-    path: string;
-    password: string;
-    recoveryKey: string;
-    syncConfig: S3Config;
-    includeRepos?: boolean;
-  }) => invoke<SyncResult>("restore_from_cloud", args),
+    restoreFromCloud: (args: {
+      path: string;
+      password: string;
+      recoveryKey: string;
+      syncConfig: S3Config;
+      includeRepos?: boolean;
+    }) => invoke<SyncResult>("restore_from_cloud", args),
+
+  // update (M7)
+  getUpdateSource: () => invoke<UpdateSource>("get_update_source"),
+  saveUpdateSource: (source: UpdateSource | null) => invoke<void>("save_update_source", { source }),
+  getAutoCheckUpdate: () => invoke<boolean>("get_auto_check_update"),
+  setAutoCheckUpdate: (enabled: boolean) => invoke<void>("set_auto_check_update", { enabled }),
+  checkUpdate: () => invoke<UpdateCheckResult>("check_update"),
+  downloadAndInstallUpdate: () => invoke<void>("download_and_install_update"),
+  skipUpdateVersion: (version: string) => invoke<void>("skip_update_version", { version }),
+  getLastUpdateCheck: () => invoke<string | null>("get_last_update_check"),
 };
 
 export function errMessage(e: unknown): string {

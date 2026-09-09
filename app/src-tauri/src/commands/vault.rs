@@ -408,6 +408,7 @@ pub(crate) fn schedule_after_unlock(app: AppHandle) {
             .unwrap_or(false);
         if still_unlocked {
             end_write_lock(&state, &app);
+            crate::update::scheduler::kick_after_unlock(app.clone());
         } else {
             state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
         }

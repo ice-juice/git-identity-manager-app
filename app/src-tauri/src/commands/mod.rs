@@ -5,6 +5,7 @@ pub mod agent;
 pub mod assets;
 pub mod repo;
 pub mod sync;
+pub mod update;
 pub mod vault;
 pub mod window;
 pub mod write;
@@ -76,6 +77,8 @@ pub struct AppState {
     pub bootstrap_busy: AtomicBool,
     /// 给界面看的启动阶段说明。
     pub startup_note: Mutex<Option<String>>,
+    /// 更新下载/安装进行中，避免重叠。
+    pub update_busy: AtomicBool,
 }
 
 impl AppState {
@@ -92,6 +95,7 @@ impl AppState {
             writes_locked: AtomicBool::new(false),
             bootstrap_busy: AtomicBool::new(false),
             startup_note: Mutex::new(None),
+            update_busy: AtomicBool::new(false),
         }
     }
 }

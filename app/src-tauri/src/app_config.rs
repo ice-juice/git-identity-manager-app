@@ -9,9 +9,15 @@ use std::path::PathBuf;
 pub const DEFAULT_AUTO_SYNC_MINUTES: u32 = 30;
 pub const MIN_AUTO_SYNC_MINUTES: u32 = 5;
 pub const MAX_AUTO_SYNC_MINUTES: u32 = 24 * 60;
+/// 内置默认更新源仓库（出厂值，用户可覆盖）。
+pub const DEFAULT_UPDATE_REPO: &str = "ice-juice/git-identity-manager-app";
 
 fn default_auto_sync_minutes() -> u32 {
     DEFAULT_AUTO_SYNC_MINUTES
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// 0 表示关闭；其余夹到 5–1440 分钟。
@@ -56,6 +62,70 @@ pub struct AppConfig {
     /// 本机安装实例 ID。换机/重装会变，不进云端工作空间。
     #[serde(default)]
     pub machine_id: String,
+    /// 更新源（None 表示使用内置默认 GitHub 仓库）。
+    #[serde(default)]
+    pub update_source: Option<UpdateSource>,
+    /// 启动后自动检查更新（默认开启）。
+    #[serde(default = "default_true")]
+    pub auto_check_update: bool,
+    /// 用户「跳过」的版本号，避免重复打扰。
+    #[serde(default)]
+    pub skipped_update_version: Option<String>,
+    /// 最近一次检查时间（ISO）。
+    #[serde(default)]
+    pub last_update_check_at: Option<String>,
+}
+
+/// 本机更新源偏好。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSource {
+    /// "github" | "manifest"
+    pub kind: String,
+    /// github 模式：owner/repo；manifest 模式留空。
+    pub repo: Option<String>,
+    /// manifest 模式：清单 URL；github 模式留空。
+    pub manifest_url: Option<String>,
+    /// 是否接受 pre-release（github 模式）。
+    #[serde(default)]
+    pub include_prerelease: bool,
+}
+
+impl Default for UpdateSource {
+    fn default() -> Self {
+        UpdateSource {
+            kind: "github".into(),
+            repo: Some(DEFAULT_UPDATE_REPO.into()),
+            manifest_url: None,
+            include_prerelease: false,
+        }
+    }
+}
+
+impl UpdateSource {
+    /// None 配置或空 github 仓库回填为出厂默认源。
+    pub fn effective(src: Option<&UpdateSource>) -> Self {
+        match src {
+            Some(src) => {
+                let mut out = src.clone();
+                if out.kind.trim().is_empty() {
+                    out.kind = "github".into();
+                }
+                if out.kind == "github"
+                    && out
+                        .repo
+                        .as_deref()
+                        .map(str::trim)
+                        .unwrap_or("")
+                        .is_empty()
+                {
+                    out.repo = Some(DEFAULT_UPDATE_REPO.into());
+                }
+                out
+            }
+            None => UpdateSource::default(),
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -72,6 +142,10 @@ impl Default for AppConfig {
             last_auto_sync_at: None,
             last_auto_sync_message: None,
             machine_id: String::new(),
+            update_source: None,
+            auto_check_update: true,
+            skipped_update_version: None,
+            last_update_check_at: None,
         }
     }
 }
@@ -128,6 +202,39 @@ mod tests {
         assert_eq!(cfg.auto_lock_minutes, 15);
         assert_eq!(cfg.auto_sync_minutes, DEFAULT_AUTO_SYNC_MINUTES);
         assert!(cfg.machine_id.is_empty());
+        assert_eq!(cfg.update_source, None);
+        assert!(cfg.auto_check_update, "旧配置缺少字段时应默认开启自动检查");
+        assert_eq!(cfg.skipped_update_version, None);
+        assert_eq!(cfg.last_update_check_at, None);
+        let filled = UpdateSource::effective(cfg.update_source.as_ref());
+        assert_eq!(filled.kind, "github");
+        assert_eq!(filled.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));
+        assert!(!filled.include_prerelease);
+    }
+
+    #[test]
+    fn empty_github_repo_falls_back_to_default() {
+        let src = UpdateSource {
+            kind: "github".into(),
+            repo: Some("  ".into()),
+            manifest_url: None,
+            include_prerelease: true,
+        };
+        let filled = UpdateSource::effective(Some(&src));
+        assert_eq!(filled.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));
+        assert!(filled.include_prerelease);
+    }
+
+    #[test]
+    fn custom_github_repo_is_preserved() {
+        let src = UpdateSource {
+            kind: "github".into(),
+            repo: Some("acme/mirror".into()),
+            manifest_url: None,
+            include_prerelease: false,
+        };
+        let filled = UpdateSource::effective(Some(&src));
+        assert_eq!(filled.repo.as_deref(), Some("acme/mirror"));
     }
 
     #[test]

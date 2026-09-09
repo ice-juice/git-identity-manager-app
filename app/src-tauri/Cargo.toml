@@ -47,6 +47,10 @@ similar = "2"
 # ---- M5 仓库/地址识别/PAT ----
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 tauri-plugin-dialog = "2.7.3"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+url = "2"
+semver = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

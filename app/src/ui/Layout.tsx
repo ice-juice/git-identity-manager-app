@@ -17,6 +17,7 @@ import {
 import { api } from "../lib/ipc";
 import { useApp } from "../store";
 import { AppLogo } from "./AppLogo";
+import { UpdateToast } from "./UpdateToast";
 
 export function Layout({ children }: { children: ReactNode }) {
   const { status, lock, theme, toggleTheme, writesLocked, startupNote } = useApp();
@@ -159,6 +160,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </main>
       </div>
+      <UpdateToast />
     </div>
   );
 }
