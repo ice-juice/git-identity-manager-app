@@ -1,10 +1,25 @@
-name: Build installers
+# 打包与发布只认 release 分支：
+# - push 到 release：多平台出包，上传 Artifacts（不建 GitHub Release）
+# - 在 release 上打 v* 标签，或手动 Run workflow 并勾选 create_release：
+#   建草稿 Release，并合并生成 latest.json
+name: Release packages
 
 on:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a draft GitHub Release and latest.json
+        type: boolean
+        default: false
   push:
+    branches:
+      - release
     tags:
       - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -24,6 +39,45 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/heads/release ]]; then
+            echo "Building from release branch"
+            exit 0
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            git fetch origin release --depth=100
+            if git merge-base --is-ancestor HEAD origin/release; then
+              echo "Tag ${GITHUB_REF_NAME} is on release"
+              exit 0
+            fi
+            echo "::error::v* 标签必须打在 release 分支的提交上"
+            exit 1
+          fi
+          echo "::error::打包与发布只允许在 release 分支，或基于该分支的 v* 标签上执行"
+          exit 1
+
+      - name: Decide release mode
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish=false
+          tag=""
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            publish=true
+            tag="${GITHUB_REF_NAME}"
+          elif [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.create_release }}" == "true" ]]; then
+            publish=true
+            tag="v__VERSION__"
+          fi
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -54,10 +108,18 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
           args: ${{ matrix.args }}
-          includeUpdaterJson: false
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: Git 多账号管理器 ${{ steps.meta.outputs.tag }}
+          releaseDraft: true
+          releaseCommitish: release
+          includeUpdaterJson: ${{ steps.meta.outputs.publish == 'true' }}
+          updaterJsonPreferNsis: true
+          updaterJsonKeepUniversal: true
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
