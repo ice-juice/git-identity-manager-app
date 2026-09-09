@@ -1,0 +1,87 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css"></head>
+<body><div class="window">
+  <div class="titlebar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">Git 多账号管理器</span><span class="spacer"></span><span class="lockstate"><span class="lk"></span>已解锁</span></div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="brand"><div class="logo">🔑</div><div class="name">账号管理器<small>juice 的工作空间</small></div></div>
+      <div class="nav-item"><span class="ic">▣</span>身份总览<span class="badge">3</span></div>
+      <div class="nav-item active"><span class="ic">🔐</span>密钥管理<span class="badge">4</span></div>
+      <div class="nav-item"><span class="ic">⚙</span>SSH 配置</div>
+      <div class="nav-item"><span class="ic">◈</span>Agent</div>
+      <div class="nav-item"><span class="ic">◨</span>仓库与克隆</div>
+      <div class="nav-item"><span class="ic">☁</span>云同步</div>
+      <div class="grow"></div>
+      <div class="side-foot"><div class="nav-item"><span class="ic">⚙</span>设置</div><div class="nav-item"><span class="ic">🔒</span>立即锁定</div></div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <div><h1>密钥管理</h1><div class="sub">所有密钥的加密副本都保存在工作空间中，查看明文需二次验证</div></div>
+        <span class="spacer"></span>
+        <button class="btn"><span>⤓</span>从外部导入</button>
+        <button class="btn primary"><span>＋</span>生成新密钥</button>
+      </div>
+      <div class="content">
+        <div class="callout info" style="margin-bottom:18px"><span>🛈</span><div>扫描到 <b>1</b> 把散落在项目目录、尚未入库的密钥：<span class="mono">D:\codeProgrammer\…\vchangr-box-git-ssh</span> · <b>收编进工作空间</b></div></div>
+        <div class="card">
+          <table>
+            <thead><tr><th>名称 / 备注</th><th>类型</th><th>指纹 (SHA256)</th><th>口令</th><th>归属身份</th><th>存储</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><b>id_ed25519_juice</b></td>
+                <td><span class="badge2 g">ed25519</span></td>
+                <td class="mono">f7Ur0uSM…RmEh8</td>
+                <td><span class="badge2 g">有口令</span></td>
+                <td>juice520</td>
+                <td><span class="badge2 i">已加密入库</span></td>
+                <td><button class="btn sm">查看</button></td>
+              </tr>
+              <tr>
+                <td><b>id_ed25519_techn</b></td>
+                <td><span class="badge2 g">ed25519</span></td>
+                <td class="mono">hzXd+tkl…ix/EQ</td>
+                <td><span class="badge2 g">有口令</span></td>
+                <td>techn4950</td>
+                <td><span class="badge2 i">已加密入库 · 严格模式</span></td>
+                <td><button class="btn sm">查看</button></td>
+              </tr>
+              <tr>
+                <td><b>vchangr-box-git-ssh</b></td>
+                <td><span class="badge2 a">rsa 2048</span></td>
+                <td class="mono">9bTm4Wq…F3n8Z</td>
+                <td><span class="badge2 a">无口令</span></td>
+                <td>boxexchanger</td>
+                <td><span class="badge2 n">仅本地引用</span></td>
+                <td><button class="btn sm">查看</button></td>
+              </tr>
+              <tr>
+                <td><b>id_rsa_old</b> <span class="muted">（旧）</span></td>
+                <td><span class="badge2 r">rsa 1024</span></td>
+                <td class="mono">2SzG5Lk…7RxE9</td>
+                <td><span class="badge2 a">无口令</span></td>
+                <td><span class="muted">未关联</span></td>
+                <td><span class="badge2 r">强度过低</span></td>
+                <td><button class="btn sm">查看</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- 查看明文的二次验证弹窗示意 -->
+        <div class="grid c2" style="margin-top:18px">
+          <div class="card card-pad">
+            <div class="section-title">🔓 查看私钥明文需二次验证</div>
+            <div class="field"><label>请重新输入访问密码</label><input class="input" type="password" value="••••••••"></div>
+            <div class="row" style="gap:10px"><button class="btn primary">确认查看</button><button class="btn ghost">取消</button></div>
+            <div class="hint" style="margin-top:10px">查看后 60 秒自动清除剪贴板；此操作会记入审计日志。</div>
+          </div>
+          <div class="card card-pad">
+            <div class="section-title">🛠 密钥操作</div>
+            <div class="row between" style="padding:8px 0"><span>为无口令密钥添加口令</span><button class="btn sm">执行</button></div>
+            <div class="row between" style="padding:8px 0;border-top:1px solid var(--border)"><span>收紧文件 ACL（icacls）</span><button class="btn sm">执行</button></div>
+            <div class="row between" style="padding:8px 0;border-top:1px solid var(--border)"><span>导出公钥 / 复制</span><button class="btn sm">执行</button></div>
+            <div class="row between" style="padding:8px 0;border-top:1px solid var(--border)"><span>删除密钥（删前强制备份）</span><button class="btn sm danger">删除</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></body></html>

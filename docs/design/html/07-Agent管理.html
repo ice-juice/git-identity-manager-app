@@ -1,0 +1,51 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css"></head>
+<body><div class="window">
+  <div class="titlebar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">Git 多账号管理器</span><span class="spacer"></span><span class="lockstate"><span class="lk"></span>已解锁</span></div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="brand"><div class="logo">🔑</div><div class="name">账号管理器<small>juice 的工作空间</small></div></div>
+      <div class="nav-item"><span class="ic">▣</span>身份总览<span class="badge">3</span></div>
+      <div class="nav-item"><span class="ic">🔐</span>密钥管理<span class="badge">4</span></div>
+      <div class="nav-item"><span class="ic">⚙</span>SSH 配置</div>
+      <div class="nav-item active"><span class="ic">◈</span>Agent</div>
+      <div class="nav-item"><span class="ic">◨</span>仓库与克隆</div>
+      <div class="nav-item"><span class="ic">☁</span>云同步</div>
+      <div class="grow"></div>
+      <div class="side-foot"><div class="nav-item"><span class="ic">⚙</span>设置</div><div class="nav-item"><span class="ic">🔒</span>立即锁定</div></div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <div><h1>ssh-agent 管理</h1><div class="sub">解锁工作空间后，密钥自动加载进 Agent，无需手动输入口令</div></div>
+        <span class="spacer"></span>
+        <button class="btn danger"><span>⌫</span>清空全部</button>
+        <button class="btn primary"><span>⟳</span>按身份重新加载</button>
+      </div>
+      <div class="content">
+        <div class="grid c2" style="margin-bottom:18px">
+          <div class="card card-pad">
+            <div class="section-title">运行模式</div>
+            <div class="row between" style="margin-bottom:10px"><span>当前 Agent 路径</span><span class="badge2 a">Git 自带 · 免管理员 fallback</span></div>
+            <div class="callout warn" style="font-size:12.5px"><span>▲</span><div>系统 ssh-agent 服务被禁用（Disabled），启用需管理员权限。已自动改用 Git 自带 agent 作为普通进程运行。<br><b>启用系统服务（需 UAC）</b></div></div>
+          </div>
+          <div class="card card-pad">
+            <div class="section-title">工具链</div>
+            <div class="row between" style="padding:6px 0"><span>System32 OpenSSH</span><span class="mono">9.5p2</span></div>
+            <div class="row between" style="padding:6px 0;border-top:1px solid var(--border)"><span>Git 自带 OpenSSH</span><span class="mono">10.5p1 <span class="badge2 g">当前使用</span></span></div>
+            <div class="row between" style="padding:6px 0;border-top:1px solid var(--border)"><span>git 实际调用</span><span class="mono">Git\usr\bin\ssh.exe</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-pad" style="border-bottom:1px solid var(--border)"><div class="section-title" style="margin:0">已加载的密钥（按指纹反查身份）</div></div>
+          <table>
+            <thead><tr><th>指纹 (SHA256)</th><th>类型</th><th>归属身份</th><th>来源</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="mono">f7Ur0uSM…RmEh8</td><td><span class="badge2 g">ed25519</span></td><td><b>juice520</b></td><td><span class="badge2 n">文件</span></td><td><button class="btn sm">卸载</button></td></tr>
+              <tr><td class="mono">hzXd+tkl…ix/EQ</td><td><span class="badge2 g">ed25519</span></td><td><b>techn4950</b></td><td><span class="badge2 i">stdin · 私钥不落盘</span></td><td><button class="btn sm">卸载</button></td></tr>
+              <tr><td class="mono" style="color:var(--text-mute)">— 未加载 —</td><td><span class="badge2 a">rsa</span></td><td><b>boxexchanger</b></td><td><span class="badge2 r">未加载</span></td><td><button class="btn sm primary">加载</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></body></html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css"></head>
+<body><div class="window">
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title">Git 多账号管理器</span>
+    <span class="spacer"></span>
+    <span class="lockstate"><span class="lk"></span>已解锁 · 12:34 后自动锁定</span>
+  </div>
+  <div class="body">
+    <!-- 侧栏 -->
+    <div class="sidebar">
+      <div class="brand"><div class="logo">🔑</div><div class="name">账号管理器<small>juice 的工作空间</small></div></div>
+      <div class="nav-item active"><span class="ic">▣</span>身份总览<span class="badge">3</span></div>
+      <div class="nav-item"><span class="ic">🔐</span>密钥管理<span class="badge">4</span></div>
+      <div class="nav-item"><span class="ic">⚙</span>SSH 配置</div>
+      <div class="nav-item"><span class="ic">◈</span>Agent</div>
+      <div class="nav-item"><span class="ic">◨</span>仓库与克隆</div>
+      <div class="nav-item"><span class="ic">☁</span>云同步</div>
+      <div class="grow"></div>
+      <div class="side-foot">
+        <div class="nav-item"><span class="ic">⚙</span>设置</div>
+        <div class="nav-item"><span class="ic">🔒</span>立即锁定</div>
+      </div>
+    </div>
+    <!-- 主区 -->
+    <div class="main">
+      <div class="topbar">
+        <div><h1>身份总览</h1><div class="sub">所有 Git 身份的密钥、配置、Agent 与连通状态</div></div>
+        <span class="spacer"></span>
+        <button class="btn"><span>⟳</span>一键体检</button>
+        <button class="btn primary"><span>＋</span>新建身份</button>
+      </div>
+      <div class="content">
+        <!-- 统计条 -->
+        <div class="grid c4" style="margin-bottom:20px">
+          <div class="card stat"><div class="k">◈ 身份总数</div><div class="v">3</div></div>
+          <div class="card stat"><div class="k">🔐 已入库密钥</div><div class="v">4 <small>全部加密</small></div></div>
+          <div class="card stat"><div class="k">◉ 连通正常</div><div class="v" style="color:var(--green)">2<small> / 3</small></div></div>
+          <div class="card stat"><div class="k">▲ 待处理问题</div><div class="v" style="color:var(--amber)">2</div></div>
+        </div>
+        <!-- 身份卡片 -->
+        <div class="grid c3">
+          <!-- 卡1 -->
+          <div class="card id-card">
+            <div class="id-top">
+              <div class="avatar" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">J</div>
+              <div style="flex:1"><div class="id-name">juice520 <span class="badge2 i">默认</span></div><div class="id-host">github.com</div></div>
+            </div>
+            <div class="id-leds">
+              <div class="cell"><span class="led g"></span><span class="lbl">密钥</span></div>
+              <div class="cell"><span class="led a"></span><span class="lbl">配置</span></div>
+              <div class="cell"><span class="led g"></span><span class="lbl">Agent</span></div>
+              <div class="cell"><span class="led g"></span><span class="lbl">连通</span></div>
+            </div>
+            <div class="callout warn" style="padding:8px 12px;font-size:12px">▲ 配置缺少 IdentitiesOnly yes，可能串号 · <b>一键修复</b></div>
+            <div class="owner-chips"><span class="chip">juice520</span></div>
+            <div class="id-foot"><button class="btn sm">详情</button><button class="btn sm">复制公钥</button></div>
+          </div>
+          <!-- 卡2 -->
+          <div class="card id-card">
+            <div class="id-top">
+              <div class="avatar" style="background:linear-gradient(135deg,#0ea5e9,#22c55e)">T</div>
+              <div style="flex:1"><div class="id-name">techn4950</div><div class="id-host">github-techn → github.com</div></div>
+            </div>
+            <div class="id-leds">
+              <div class="cell"><span class="led g"></span><span class="lbl">密钥</span></div>
+              <div class="cell"><span class="led g"></span><span class="lbl">配置</span></div>
+              <div class="cell"><span class="led g"></span><span class="lbl">Agent</span></div>
+              <div class="cell"><span class="led g"></span><span class="lbl">连通</span></div>
+            </div>
+            <div class="callout info" style="padding:8px 12px;font-size:12px">◉ 上次体检：Hi techn4950 ✓ 账号匹配</div>
+            <div class="owner-chips"><span class="chip">techn4950</span><span class="chip">vortaq-trad</span><span class="chip">vortaq-*</span></div>
+            <div class="id-foot"><button class="btn sm">详情</button><button class="btn sm">复制公钥</button></div>
+          </div>
+          <!-- 卡3 -->
+          <div class="card id-card">
+            <div class="id-top">
+              <div class="avatar" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">B</div>
+              <div style="flex:1"><div class="id-name">boxexchanger</div><div class="id-host">ssh.boxexchanger.net</div></div>
+            </div>
+            <div class="id-leds">
+              <div class="cell"><span class="led g"></span><span class="lbl">密钥</span></div>
+              <div class="cell"><span class="led g"></span><span class="lbl">配置</span></div>
+              <div class="cell"><span class="led x"></span><span class="lbl">Agent</span></div>
+              <div class="cell"><span class="led r"></span><span class="lbl">连通</span></div>
+            </div>
+            <div class="callout danger" style="padding:8px 12px;font-size:12px">✕ 密钥未加载进 Agent · <b>一键加载</b></div>
+            <div class="owner-chips"><span class="chip">bx4/vchangr-com</span></div>
+            <div class="id-foot"><button class="btn sm">详情</button><button class="btn sm">复制公钥</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></body></html>

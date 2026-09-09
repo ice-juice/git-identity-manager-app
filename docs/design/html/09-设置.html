@@ -1,0 +1,50 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css"></head>
+<body><div class="window">
+  <div class="titlebar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">Git 多账号管理器</span><span class="spacer"></span><span class="lockstate"><span class="lk"></span>已解锁</span></div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="brand"><div class="logo">🔑</div><div class="name">账号管理器<small>juice 的工作空间</small></div></div>
+      <div class="nav-item"><span class="ic">▣</span>身份总览<span class="badge">3</span></div>
+      <div class="nav-item"><span class="ic">🔐</span>密钥管理<span class="badge">4</span></div>
+      <div class="nav-item"><span class="ic">⚙</span>SSH 配置</div>
+      <div class="nav-item"><span class="ic">◈</span>Agent</div>
+      <div class="nav-item"><span class="ic">◨</span>仓库与克隆</div>
+      <div class="nav-item"><span class="ic">☁</span>云同步</div>
+      <div class="grow"></div>
+      <div class="side-foot"><div class="nav-item active"><span class="ic">⚙</span>设置</div><div class="nav-item"><span class="ic">🔒</span>立即锁定</div></div>
+    </div>
+    <div class="main">
+      <div class="topbar"><div><h1>设置</h1><div class="sub">安全 · 工作空间 · 工具链</div></div></div>
+      <div class="content">
+        <div class="grid c2">
+          <div class="card card-pad">
+            <div class="section-title">🔒 安全</div>
+            <div class="row between" style="padding:10px 0"><div><div>访问密码</div><div class="muted" style="font-size:12px">用于解锁工作空间</div></div><button class="btn sm">修改</button></div>
+            <div class="row between" style="padding:10px 0;border-top:1px solid var(--border)"><div><div>数据恢复密钥</div><div class="muted" style="font-size:12px">仅用于找回，可重新生成使旧密钥作废</div></div><button class="btn sm">重新生成</button></div>
+            <div class="row between" style="padding:10px 0;border-top:1px solid var(--border)"><div><div>自动锁定</div><div class="muted" style="font-size:12px">无操作后自动锁定</div></div><span class="mono">15 分钟 ▾</span></div>
+            <div class="row between" style="padding:10px 0;border-top:1px solid var(--border)"><div>系统休眠 / 锁屏时立即锁定</div><div class="switch"></div></div>
+            <div class="row between" style="padding:10px 0;border-top:1px solid var(--border)"><div>Windows Hello 快速解锁</div><div class="switch off"></div></div>
+            <div class="row between" style="padding:10px 0;border-top:1px solid var(--border)"><div><div>查看私钥/口令需二次验证</div><div class="muted" style="font-size:12px">推荐保持开启</div></div><div class="switch"></div></div>
+          </div>
+          <div class="card card-pad">
+            <div class="section-title">📁 工作空间</div>
+            <div class="field"><label>当前工作空间</label><input class="input mono" value="D:\GitVault" readonly></div>
+            <div class="callout warn" style="font-size:12.5px;margin-bottom:14px"><span>▲</span><div>检测到工作空间不在同步盘内 ✓。请勿放入 OneDrive/坚果云——加密备份应走云同步通道。</div></div>
+            <div class="section-title">🔧 工具链</div>
+            <div class="row between" style="padding:8px 0"><span>使用的 ssh</span><span class="mono">Git 10.5p1 ▾</span></div>
+            <div class="row between" style="padding:8px 0;border-top:1px solid var(--border)"><span>GitHub PAT（用于上传公钥/查组织）</span><span class="badge2 g">已配置 · 已加密</span></div>
+            <div class="row between" style="padding:8px 0;border-top:1px solid var(--border)"><span>仓库扫描根目录</span><span class="mono">D:\coding_program</span></div>
+            <div class="row between" style="padding:8px 0;border-top:1px solid var(--border)"><span>透明模式：执行前预览命令</span><div class="switch"></div></div>
+          </div>
+        </div>
+        <div class="card card-pad" style="margin-top:16px">
+          <div class="section-title">🧾 最近操作审计（脱敏）</div>
+          <div class="code" style="font-size:12px"><span class="c">12:31:04</span> 写入 ~/.ssh/config 托管区块（备份 config.bak.20260908-123104）
+<span class="c">12:30:58</span> 加载密钥 techn4950 进 Agent（stdin，私钥未落盘）
+<span class="c">12:28:12</span> 导入密钥 vchangr-box-git-ssh → 已加密入库
+<span class="c">12:27:40</span> 解锁工作空间</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></body></html>
