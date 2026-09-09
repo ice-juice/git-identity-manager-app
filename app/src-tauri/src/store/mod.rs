@@ -123,6 +123,7 @@ mod tests {
             has_passphrase: true,
             weak: false,
             source_path: None,
+            deployed_path: None,
             imported_at: "now".into(),
         });
         data.identities.push(Identity {
@@ -137,6 +138,7 @@ mod tests {
             key_id: Some("k1".into()),
             owners: vec!["vortaq-trad".into()],
             strict_mode: false,
+            updated_at: String::new(),
         });
         save_data(&v, &data).unwrap();
 

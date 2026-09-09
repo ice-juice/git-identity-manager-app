@@ -23,6 +23,8 @@ pub enum AppError {
     Serde(String),
     #[error("参数错误：{0}")]
     Invalid(String),
+    #[error("正在从云端同步，请稍后再修改")]
+    Busy,
     #[error("{0}")]
     Other(String),
 }
@@ -41,6 +43,7 @@ impl AppError {
             AppError::Io(_) => "IO",
             AppError::Serde(_) => "SERDE",
             AppError::Invalid(_) => "INVALID",
+            AppError::Busy => "BUSY",
             AppError::Other(_) => "OTHER",
         }
     }

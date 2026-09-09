@@ -140,6 +140,33 @@ pub fn list(existing: &str) -> Vec<ManagedEntry> {
     split(existing).1
 }
 
+/// 用快照里的托管区块覆盖本机 config 的托管区，保留用户手写内容。
+pub fn apply_managed_from_snapshot(home: &str, snapshot: &str) -> String {
+    let entries = list(snapshot);
+    let (before, _, after) = split(home);
+    reassemble(&before, &entries, &after)
+}
+
+/// 多端合并托管 Host：同 alias 以本地为准，对端新增且仍有效的 alias 并入。
+pub fn merge_managed_prefer_local(
+    local: &str,
+    remote: &str,
+    keep_remote_aliases: &std::collections::HashSet<String>,
+) -> String {
+    let (before, mut entries, after) = split(local);
+    let local_aliases: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.alias.clone()).collect();
+    for entry in list(remote) {
+        if local_aliases.contains(&entry.alias) {
+            continue;
+        }
+        if keep_remote_aliases.contains(&entry.alias) {
+            entries.push(entry);
+        }
+    }
+    reassemble(&before, &entries, &after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +228,33 @@ mod tests {
         let e = ManagedEntry::new("gh", "github.com", "/k/id.pub");
         let out = upsert("", e);
         assert!(out.contains("IdentityFile /k/id.pub"));
+    }
+
+    #[test]
+    fn merge_managed_keeps_local_and_adds_remote_only() {
+        let local = upsert("", ManagedEntry::new("gh-a", "github.com", "/k/a"));
+        let remote = {
+            let mut t = upsert("", ManagedEntry::new("gh-a", "github.com", "/k/a-old"));
+            t = upsert(&t, ManagedEntry::new("gh-b", "github.com", "/k/b"));
+            upsert(&t, ManagedEntry::new("gh-gone", "github.com", "/k/x"))
+        };
+        let keep = std::collections::HashSet::from(["gh-b".into()]);
+        let out = merge_managed_prefer_local(&local, &remote, &keep);
+        let aliases: Vec<String> = list(&out).into_iter().map(|e| e.alias).collect();
+        assert_eq!(aliases, vec!["gh-a".to_string(), "gh-b".to_string()]);
+        assert_eq!(
+            list(&out).iter().find(|e| e.alias == "gh-a").unwrap().identity_file,
+            "/k/a"
+        );
+    }
+
+    #[test]
+    fn apply_managed_from_snapshot_keeps_user_hosts() {
+        let home = "Host keep\n    HostName x\n\n# ===== BEGIN managed by git-account-manager =====\nHost old\n    HostName github.com\n    User git\n    IdentityFile /old\n# ===== END managed by git-account-manager =====\n";
+        let snap = upsert("", ManagedEntry::new("new", "github.com", "/k/new"));
+        let out = apply_managed_from_snapshot(home, &snap);
+        assert!(out.contains("Host keep"));
+        assert!(out.contains("Host new"));
+        assert!(!out.contains("Host old"));
     }
 }

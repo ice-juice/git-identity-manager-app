@@ -1,32 +1,19 @@
-# React + TypeScript + Vite
+# Git 多账号管理器 - 前端与应用目录
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+本项目的前端与桌面主入口目录。完整项目架构、安全设计与使用说明请参阅根目录 [README.md](../README.md)。
 
-Currently, two official plugins are available:
+## 开发指令
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+# 运行前端开发服务器
+npm run dev
 
-## React Compiler
+# 构建前端产物
+npm run build
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+# 启动桌面端调试
+npm run tauri dev
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+# 打包桌面安装程序
+npm run tauri build
 ```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.

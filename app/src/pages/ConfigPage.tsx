@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, errMessage, type ConfigView } from "../lib/ipc";
 import { PageHead, Card, Empty, Badge } from "../ui/common";
+import { useApp } from "../store";
 
 export function ConfigPage() {
   const [view, setView] = useState<ConfigView | null>(null);
   const [err, setErr] = useState("");
+  const { writesLocked } = useApp();
 
   async function load() {
     setErr("");
@@ -17,16 +19,42 @@ export function ConfigPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [writesLocked]);
 
   return (
     <div className="stack-lg">
       <PageHead
         title="SSH 配置"
-        desc="解析 ~/.ssh/config，健康检查仅提示不自动改动用户手写区"
-        actions={<button className="btn ghost" onClick={load}>刷新</button>}
+        desc="真实配置在工作空间 ssh/config。本机 ~/.ssh/config 只保留 Include，供系统 ssh/git 自动加载。"
+        actions={
+          <div className="row" style={{ gap: 6 }}>
+            <button
+              className="btn primary"
+              disabled={writesLocked}
+              onClick={async () => {
+                setErr("");
+                try {
+                  await api.openSshConfig();
+                } catch (e) {
+                  setErr(errMessage(e));
+                }
+              }}
+            >
+              用记事本打开并编辑
+            </button>
+            <button className="btn ghost" onClick={load}>刷新</button>
+          </div>
+        }
       />
       {err && <div className="err-text">{err}</div>}
+      {view && (
+        <div className="muted sm">
+          工作空间正本（下面 Host / 原文都来自这里）：<span className="mono">{view.path}</span>
+          <br />
+          系统入口 ~/.ssh/config：<span className="mono">{view.systemPath}</span>
+          {view.registered ? "（只含 Include，供 ssh/git 加载正本）" : "（尚未注册 Include，解锁后会自动写入）"}
+        </div>
+      )}
 
       <Card title="健康检查">
         {!view || view.diagnostics.length === 0 ? (
@@ -67,7 +95,7 @@ export function ConfigPage() {
         )}
       </Card>
 
-      <Card title="原始内容">
+      <Card title="工作空间正本内容">
         <pre className="code-block">{view?.raw || "（空）"}</pre>
       </Card>
     </div>

@@ -54,30 +54,30 @@ pub fn agent_status(state: State<AppState>) -> Result<AgentStatus> {
     })
 }
 
-/// 确保 agent 可用：先探测，不行则启动 Git 自带 ssh-agent（免提权 fallback）。
+/// 确保 agent 可用：先探测 Windows OpenSSH，不行则启动 Git 自带 ssh-agent。
 #[tauri::command]
 pub fn agent_ensure(state: State<AppState>) -> Result<AgentStatus> {
-    {
-        let env = state.agent_env.lock().unwrap().clone();
-        if agent::list(&env).is_ok() {
-            drop(env);
-            return agent_status(state);
-        }
-    }
-    // 启动 fallback。
-    let env = agent::start_git_agent()?;
-    *state.agent_env.lock().unwrap() = env;
+    ready_env(&state)?;
     agent_status(state)
 }
 
-fn env_of(state: &State<AppState>) -> crate::agent::AgentEnv {
-    state.agent_env.lock().unwrap().clone()
+/// 复用已就绪的 agent；否则启动系统或 Git ssh-agent 并写回状态。
+fn ready_env(state: &State<AppState>) -> Result<crate::agent::AgentEnv> {
+    {
+        let env = state.agent_env.lock().unwrap().clone();
+        if agent::is_ready(&env) {
+            return Ok(env);
+        }
+    }
+    let env = agent::ensure()?;
+    *state.agent_env.lock().unwrap() = env.clone();
+    Ok(env)
 }
 
 /// 加载单把密钥。
 #[tauri::command]
 pub fn agent_load(state: State<AppState>, key_id: String) -> Result<()> {
-    let env = env_of(&state);
+    let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     agent::load_key(v, &env, &key_id)?;
@@ -88,7 +88,7 @@ pub fn agent_load(state: State<AppState>, key_id: String) -> Result<()> {
 /// 按身份加载其绑定的密钥。
 #[tauri::command]
 pub fn agent_load_identity(state: State<AppState>, identity_id: String) -> Result<()> {
-    let env = env_of(&state);
+    let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_data(v)?;
@@ -108,7 +108,7 @@ pub fn agent_load_identity(state: State<AppState>, identity_id: String) -> Resul
 /// 解锁后自动加载所有身份的密钥（状态灯转绿）。
 #[tauri::command]
 pub fn agent_load_all(state: State<AppState>) -> Result<u32> {
-    let env = env_of(&state);
+    let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_data(v)?;
@@ -127,7 +127,7 @@ pub fn agent_load_all(state: State<AppState>) -> Result<u32> {
 /// 卸载某把密钥（按 key_id 找公钥再 ssh-add -d）。
 #[tauri::command]
 pub fn agent_unload(state: State<AppState>, key_id: String) -> Result<()> {
-    let env = env_of(&state);
+    let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_data(v)?;
@@ -142,6 +142,6 @@ pub fn agent_unload(state: State<AppState>, key_id: String) -> Result<()> {
 /// 清空 agent 全部密钥。
 #[tauri::command]
 pub fn agent_clear(state: State<AppState>) -> Result<()> {
-    let env = env_of(&state);
+    let env = ready_env(&state)?;
     agent::clear(&env)
 }

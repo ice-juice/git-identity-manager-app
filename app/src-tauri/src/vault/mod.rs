@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 pub const VAULT_FILE: &str = "vault.json";
 
 /// vault 管理器：持有工作空间路径、头部；解锁后在内存中持有 MK。
+#[derive(Clone)]
 pub struct Vault {
     root: PathBuf,
     header: VaultHeader,
@@ -65,7 +66,7 @@ impl Vault {
             return Err(AppError::AlreadyInitialized(root.display().to_string()));
         }
         std::fs::create_dir_all(root)?;
-        for sub in ["data", "keys", "backups", "sync"] {
+        for sub in ["data", "keys", "backups", "sync", "ssh-keys", "ssh"] {
             std::fs::create_dir_all(root.join(sub))?;
         }
 
@@ -143,6 +144,30 @@ impl Vault {
     /// 锁定：清零 MK。
     pub fn lock(&mut self) {
         self.mk = None; // MasterKey 的 Drop 会 zeroize
+    }
+
+    /// 用已恢复的主密钥解锁（仅供本机 DPAPI 免验证会话）。
+    pub fn unlock_with_master_key(&mut self, mk: MasterKey) -> Result<()> {
+        self.mk = Some(mk);
+        let data_file = self.root.join("data").join("identities.enc");
+        if data_file.is_file() && crate::store::load_data(self).is_err() {
+            self.lock();
+            return Err(AppError::BadPassword);
+        }
+        Ok(())
+    }
+
+    /// 复制主密钥字节（仅用于写入本机免验证会话）。
+    pub fn master_key_bytes(&self) -> Result<[u8; crypto::KEY_LEN]> {
+        Ok(*self.mk()?.as_bytes())
+    }
+
+    pub fn master_key(&self) -> Result<&MasterKey> {
+        self.mk()
+    }
+
+    pub fn object_name(&self, logical_path: &str) -> Result<String> {
+        Ok(self.mk()?.object_name(logical_path))
     }
 
     fn mk(&self) -> Result<&MasterKey> {

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "git-account-manager",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "identifier": "com.jeck.gitaccountmanager",
   "build": {
     "frontendDist": "../dist",
@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Git 多账号管理器",
-        "width": 1180,
-        "height": 780,
-        "minWidth": 960,
-        "minHeight": 640,
+        "width": 980,
+        "height": 620,
+        "minWidth": 840,
+        "minHeight": 520,
         "resizable": true,
         "fullscreen": false
       }
@@ -33,8 +33,14 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.png"
     ],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

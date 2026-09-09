@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { Sun, Moon, Palette } from "lucide-react";
 import { api, errMessage } from "../lib/ipc";
 import { useApp } from "../store";
+import { AppLogo } from "../ui/AppLogo";
 
 export function Unlock() {
-  const refresh = useApp((s) => s.refresh);
+  const { refresh, theme, toggleTheme } = useApp();
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,7 +32,7 @@ export function Unlock() {
   return (
     <div className="unlock-stage">
       <div className="unlock-card">
-        <div className="unlock-logo">🔐</div>
+        <AppLogo size={46} style={{ margin: "0 auto 10px" }} />
         <div className="title-lg">解锁工作空间</div>
         <div className="muted" style={{ marginBottom: 20 }}>
           {recoveryMode ? "输入恢复密钥以解锁（忘记密码时使用）" : "输入访问密码继续"}
@@ -58,12 +60,13 @@ export function Unlock() {
 
         {err && <div className="err-text">{err}</div>}
 
-        <button className="btn primary lg" style={{ width: "100%", marginTop: 16 }} disabled={busy} onClick={unlock}>
+        <button type="button" className="btn primary lg" style={{ width: "100%", marginTop: 16 }} disabled={busy} onClick={unlock}>
           {busy ? "解锁中…" : "解锁"}
         </button>
         <button
+          type="button"
           className="btn ghost sm"
-          style={{ marginTop: 12 }}
+          style={{ marginTop: 8 }}
           onClick={() => {
             setErr("");
             setRecoveryMode((m) => !m);
@@ -71,6 +74,18 @@ export function Unlock() {
         >
           {recoveryMode ? "改用访问密码" : "忘记密码？用恢复密钥"}
         </button>
+
+        <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={toggleTheme}
+            style={{ display: "inline-flex", gap: 5, color: "var(--text-mute)", fontSize: 11 }}
+          >
+            {theme === "light" ? <Sun size={12} /> : theme === "dark" ? <Moon size={12} /> : <Palette size={12} />}
+            <span>皮肤：{theme === "light" ? "极简浅色" : theme === "dark" ? "冷萃深色" : "沉稳黛蓝"}</span>
+          </button>
+        </div>
       </div>
     </div>
   );

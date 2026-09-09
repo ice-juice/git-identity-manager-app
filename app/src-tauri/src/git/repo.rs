@@ -3,7 +3,7 @@
 use crate::error::Result;
 use crate::git::infer::{infer, Inference};
 use crate::git::url::parse_repo_url;
-use crate::model::Identity;
+use crate::model::{Identity, ManagedRepo};
 use crate::sys;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -122,6 +122,253 @@ fn git_config(path: &str, key: &str) -> Option<String> {
         })
 }
 
+/// 克隆/初始化目标目录的探测结果。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClonePlan {
+    /// empty | missing | parent | existingProject | alreadyGit | alreadyGitHasRemote
+    pub kind: String,
+    /// clone | init | addRemote | blocked
+    pub suggested_mode: String,
+    pub dest: String,
+    pub target_path: String,
+    pub repo_name: String,
+    pub message: String,
+    pub can_proceed: bool,
+}
+
+const IGNORE_ENTRIES: &[&str] = &[".ds_store", "thumbs.db", "desktop.ini"];
+
+const PROJECT_MARKERS: &[&str] = &[
+    "package.json",
+    "cargo.toml",
+    "pom.xml",
+    "go.mod",
+    "pyproject.toml",
+    "requirements.txt",
+    "composer.json",
+    "gemfile",
+    "cmakelists.txt",
+    "makefile",
+    "src",
+    "lib",
+    "app",
+];
+
+fn is_ignored_name(name: &str) -> bool {
+    IGNORE_ENTRIES.contains(&name.to_ascii_lowercase().as_str())
+}
+
+/// 目录是否不存在、或仅含系统垃圾文件。
+pub fn is_effectively_empty(dir: &Path) -> bool {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    rd.flatten().all(|e| is_ignored_name(&e.file_name().to_string_lossy()))
+}
+
+fn looks_like_project(dir: &Path) -> bool {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    for entry in rd.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let lower = name.to_ascii_lowercase();
+        if PROJECT_MARKERS.contains(&lower.as_str()) {
+            return true;
+        }
+        if lower.ends_with(".sln") || lower.ends_with(".csproj") || lower.ends_with(".code-workspace") {
+            return true;
+        }
+    }
+    false
+}
+
+fn dir_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// 根据用户选定的文件夹与仓库名，决定 clone / init / 加 remote / 拒绝。
+///
+/// - 空目录或不存在：在该路径执行 `git clone`（目录即仓库根）。
+/// - 已有项目文件、无 .git：在该路径执行 `git init` 并绑定远程。
+/// - 非空且不像项目（更像工作区父目录）：在其下新建 `repo_name` 再 clone。
+/// - 已是 Git 仓库：无 origin 则补 remote，有 origin 则拒绝。
+pub fn plan_clone_or_init(dest: &Path, repo_name: &str) -> ClonePlan {
+    let dest_str = dest.display().to_string();
+    let repo = repo_name.trim();
+    let repo = if repo.is_empty() { "repo" } else { repo };
+
+    if !dest.exists() {
+        return ClonePlan {
+            kind: "missing".into(),
+            suggested_mode: "clone".into(),
+            dest: dest_str.clone(),
+            target_path: dest_str,
+            repo_name: repo.into(),
+            message: "目标目录尚不存在，将创建并执行 git clone（目录即仓库根）。".into(),
+            can_proceed: true,
+        };
+    }
+
+    if !dest.is_dir() {
+        return ClonePlan {
+            kind: "blocked".into(),
+            suggested_mode: "blocked".into(),
+            dest: dest_str.clone(),
+            target_path: dest_str,
+            repo_name: repo.into(),
+            message: "选定路径不是文件夹，请另选目录。".into(),
+            can_proceed: false,
+        };
+    }
+
+    if dest.join(".git").exists() {
+        let dest_s = dest_str.clone();
+        let has_origin = sys::run("git", &["-C", &dest_s, "remote", "get-url", "origin"])
+            .ok()
+            .map(|(o, _, c)| c == 0 && !o.trim().is_empty())
+            .unwrap_or(false);
+        if has_origin {
+            return ClonePlan {
+                kind: "alreadyGitHasRemote".into(),
+                suggested_mode: "blocked".into(),
+                dest: dest_str.clone(),
+                target_path: dest_str,
+                repo_name: repo.into(),
+                message: "该目录已是 Git 仓库且已配置 origin。请另选空文件夹克隆，或另选未初始化的项目目录。".into(),
+                can_proceed: false,
+            };
+        }
+        return ClonePlan {
+            kind: "alreadyGit".into(),
+            suggested_mode: "addRemote".into(),
+            dest: dest_str.clone(),
+            target_path: dest_str,
+            repo_name: repo.into(),
+            message: "该目录已是 Git 仓库但没有 origin，将绑定别名远程地址（不拉取、不覆盖文件）。".into(),
+            can_proceed: true,
+        };
+    }
+
+    if is_effectively_empty(dest) {
+        return ClonePlan {
+            kind: "empty".into(),
+            suggested_mode: "clone".into(),
+            dest: dest_str.clone(),
+            target_path: dest_str,
+            repo_name: repo.into(),
+            message: "目标为空文件夹，将在此目录执行 git clone（目录即仓库根）。".into(),
+            can_proceed: true,
+        };
+    }
+
+    let name_matches_repo = dir_name(dest).eq_ignore_ascii_case(repo);
+    if looks_like_project(dest) || name_matches_repo {
+        return ClonePlan {
+            kind: "existingProject".into(),
+            suggested_mode: "init".into(),
+            dest: dest_str.clone(),
+            target_path: dest_str,
+            repo_name: repo.into(),
+            message: "该目录已有项目文件但不是 Git 仓库。将执行 git init 并绑定远程（不会覆盖现有文件，也不会自动拉取）。".into(),
+            can_proceed: true,
+        };
+    }
+
+    let child = dest.join(repo);
+    if child.exists() {
+        if child.join(".git").exists() {
+            return ClonePlan {
+                kind: "alreadyGitHasRemote".into(),
+                suggested_mode: "blocked".into(),
+                dest: dest_str,
+                target_path: child.display().to_string(),
+                repo_name: repo.into(),
+                message: format!("子目录「{repo}」已存在且是 Git 仓库。请另选空文件夹，或直接打开该仓库。"),
+                can_proceed: false,
+            };
+        }
+        if !is_effectively_empty(&child) {
+            return ClonePlan {
+                kind: "existingProject".into(),
+                suggested_mode: "init".into(),
+                dest: dest_str,
+                target_path: child.display().to_string(),
+                repo_name: repo.into(),
+                message: format!("子目录「{repo}」已有内容但不是 Git 仓库。将对其执行 git init 并绑定远程（不覆盖现有文件）。"),
+                can_proceed: true,
+            };
+        }
+    }
+
+    ClonePlan {
+        kind: "parent".into(),
+        suggested_mode: "clone".into(),
+        dest: dest_str,
+        target_path: child.display().to_string(),
+        repo_name: repo.into(),
+        message: format!("所选目录非空，更像工作区。将在其下新建空目录「{repo}」并执行 git clone。"),
+        can_proceed: true,
+    }
+}
+
+/// 统一路径比较：反斜杠、尾斜杠、Windows 大小写。
+pub fn normalize_repo_path(p: &str) -> String {
+    let mut s = p.trim().replace('\\', "/");
+    while s.len() > 1 && s.ends_with('/') {
+        s.pop();
+    }
+    #[cfg(windows)]
+    {
+        s.make_ascii_lowercase();
+    }
+    s
+}
+
+pub fn display_repo_name(path: &str) -> String {
+    let n = path.replace('\\', "/");
+    n.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .to_string()
+}
+
+/// 按规范化路径插入或更新已登记仓库。返回 (是否新建, id)。
+pub fn upsert_managed_repo(repos: &mut Vec<ManagedRepo>, incoming: ManagedRepo) -> (bool, String) {
+    let key = normalize_repo_path(&incoming.path);
+    if let Some(existing) = repos
+        .iter_mut()
+        .find(|r| normalize_repo_path(&r.path) == key)
+    {
+        existing.path = incoming.path;
+        if !incoming.name.is_empty() {
+            existing.name = incoming.name;
+        }
+        if incoming.remote_url.is_some() {
+            existing.remote_url = incoming.remote_url;
+        }
+        if incoming.identity_id.is_some() {
+            existing.identity_id = incoming.identity_id;
+        }
+        if !incoming.source.is_empty() {
+            existing.source = incoming.source;
+        }
+        (false, existing.id.clone())
+    } else {
+        let id = incoming.id.clone();
+        repos.push(incoming);
+        (true, id)
+    }
+}
+
 /// 切换仓库身份：改 remote 为别名地址 + 设仓库级提交身份。
 pub fn switch_identity(
     repo: &str,
@@ -156,6 +403,7 @@ mod tests {
             key_id: None,
             owners: owners.iter().map(|s| s.to_string()).collect(),
             strict_mode: false,
+            updated_at: String::new(),
         }
     }
 
@@ -191,5 +439,107 @@ mod tests {
             inf.rewritten_url.as_deref(),
             Some("git@github-techn:vortaq-trad/vq.git")
         );
+    }
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("gam-clone-plan-{}-{}", label, uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn plan_missing_dir_is_clone() {
+        let p = std::env::temp_dir().join(format!("gam-missing-{}", uuid::Uuid::new_v4()));
+        let plan = plan_clone_or_init(&p, "demo");
+        assert_eq!(plan.suggested_mode, "clone");
+        assert_eq!(plan.kind, "missing");
+        assert!(plan.can_proceed);
+        assert_eq!(plan.target_path, p.display().to_string());
+    }
+
+    #[test]
+    fn plan_empty_dir_is_clone_into_itself() {
+        let p = temp_dir("empty");
+        let plan = plan_clone_or_init(&p, "demo");
+        assert_eq!(plan.kind, "empty");
+        assert_eq!(plan.suggested_mode, "clone");
+        assert_eq!(plan.target_path, p.display().to_string());
+        std::fs::remove_dir_all(&p).ok();
+    }
+
+    #[test]
+    fn plan_existing_project_is_init() {
+        let p = temp_dir("proj");
+        std::fs::write(p.join("package.json"), "{}").unwrap();
+        let plan = plan_clone_or_init(&p, "other-name");
+        assert_eq!(plan.kind, "existingProject");
+        assert_eq!(plan.suggested_mode, "init");
+        assert_eq!(plan.target_path, p.display().to_string());
+        std::fs::remove_dir_all(&p).ok();
+    }
+
+    #[test]
+    fn plan_parent_workspace_clones_into_child() {
+        let p = temp_dir("work");
+        std::fs::create_dir_all(p.join("unrelated")).unwrap();
+        let plan = plan_clone_or_init(&p, "demo-repo");
+        assert_eq!(plan.kind, "parent");
+        assert_eq!(plan.suggested_mode, "clone");
+        assert_eq!(plan.target_path, p.join("demo-repo").display().to_string());
+        std::fs::remove_dir_all(&p).ok();
+    }
+
+    #[test]
+    fn plan_folder_named_as_repo_is_init() {
+        let root = temp_dir("named");
+        let p = root.join("my-app");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("readme.txt"), "hi").unwrap();
+        let plan = plan_clone_or_init(&p, "my-app");
+        assert_eq!(plan.suggested_mode, "init");
+        assert_eq!(plan.kind, "existingProject");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn normalize_repo_path_unifies_slash_and_case() {
+        let a = normalize_repo_path(r"D:\Work\Repo\");
+        let b = normalize_repo_path("d:/work/repo");
+        assert_eq!(a, b);
+        assert_eq!(display_repo_name(r"D:\Work\demo-app"), "demo-app");
+    }
+
+    #[test]
+    fn upsert_managed_repo_updates_same_path() {
+        let mut repos = Vec::new();
+        let first = ManagedRepo {
+            id: "r1".into(),
+            path: r"D:\Work\App".into(),
+            name: "App".into(),
+            remote_url: Some("git@github.com:o/r.git".into()),
+            identity_id: None,
+            added_at: "t1".into(),
+            source: "scan".into(),
+        };
+        let (is_new, id) = upsert_managed_repo(&mut repos, first);
+        assert!(is_new);
+        assert_eq!(id, "r1");
+        let (is_new, id) = upsert_managed_repo(
+            &mut repos,
+            ManagedRepo {
+                id: "r2".into(),
+                path: "d:/work/app".into(),
+                name: "App".into(),
+                remote_url: Some("git@github-x:o/r.git".into()),
+                identity_id: Some("i1".into()),
+                added_at: "t2".into(),
+                source: "clone".into(),
+            },
+        );
+        assert!(!is_new);
+        assert_eq!(id, "r1");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].identity_id.as_deref(), Some("i1"));
+        assert_eq!(repos[0].remote_url.as_deref(), Some("git@github-x:o/r.git"));
     }
 }

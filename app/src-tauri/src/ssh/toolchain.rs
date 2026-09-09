@@ -40,20 +40,34 @@ pub fn parse_ssh_version(text: &str) -> Option<String> {
     }
 }
 
-/// 候选路径（Windows）。真实版本需运行 `ssh -V` 再填。
+/// 候选路径。真实版本需运行 `ssh -V` 再填。
 pub fn candidate_paths() -> Vec<(String, PathBuf)> {
     let mut v = Vec::new();
-    if let Ok(win) = std::env::var("SystemRoot") {
-        v.push((
-            "system".into(),
-            PathBuf::from(win).join(r"System32\OpenSSH\ssh.exe"),
-        ));
+    #[cfg(windows)]
+    {
+        if let Ok(win) = std::env::var("SystemRoot") {
+            v.push((
+                "system".into(),
+                PathBuf::from(win).join(r"System32\OpenSSH\ssh.exe"),
+            ));
+        }
+        for p in [
+            r"C:\Program Files\Git\usr\bin\ssh.exe",
+            r"C:\Program Files (x86)\Git\usr\bin\ssh.exe",
+        ] {
+            v.push(("git".into(), PathBuf::from(p)));
+        }
     }
-    for p in [
-        r"C:\Program Files\Git\usr\bin\ssh.exe",
-        r"C:\Program Files (x86)\Git\usr\bin\ssh.exe",
-    ] {
-        v.push(("git".into(), PathBuf::from(p)));
+    #[cfg(not(windows))]
+    {
+        for p in [
+            "/usr/bin/ssh",
+            "/usr/local/bin/ssh",
+            "/opt/homebrew/bin/ssh",
+            "/opt/local/bin/ssh",
+        ] {
+            v.push(("system".into(), PathBuf::from(p)));
+        }
     }
     v
 }

@@ -1,13 +1,16 @@
 //! vault 相关 IPC 命令。
 
+use crate::autostart;
 use crate::commands::AppState;
 use crate::error::{AppError, Result};
+use crate::session;
+use crate::vault::crypto::MasterKey;
 use crate::vault::header::KdfParams;
 use crate::vault::kdf::{calibrate, DEFAULT_TARGET_MS};
 use crate::vault::Vault;
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,6 +20,15 @@ pub struct VaultStatus {
     pub workspace_path: Option<String>,
     pub workspace_id: Option<String>,
     pub auto_lock_minutes: u32,
+    pub launch_at_login: bool,
+    pub grace_days: u32,
+    pub grace_active: bool,
+    pub grace_expires_at: Option<String>,
+    /// `tray` / `quit` / None（每次询问）。
+    pub close_action: Option<String>,
+    /// 启动云同步未完成时禁止修改。
+    pub writes_locked: bool,
+    pub startup_note: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -43,12 +55,21 @@ pub fn vault_status(state: State<AppState>) -> VaultStatus {
         .as_ref()
         .map(|p| Vault::exists(&PathBuf::from(p)))
         .unwrap_or(false);
+    let workspace_id = vault.as_ref().map(|v| v.workspace_id().to_string());
+    let grace = session::info(workspace_id.as_deref());
     VaultStatus {
         initialized,
         unlocked: vault.as_ref().map(|v| v.is_unlocked()).unwrap_or(false),
         workspace_path: cfg.workspace_path.clone(),
-        workspace_id: vault.as_ref().map(|v| v.workspace_id().to_string()),
+        workspace_id,
         auto_lock_minutes: cfg.auto_lock_minutes,
+        launch_at_login: cfg.launch_at_login || autostart::is_enabled(),
+        grace_days: cfg.grace_days,
+        grace_active: grace.active,
+        grace_expires_at: grace.expires_at,
+        close_action: cfg.close_action.clone(),
+        writes_locked: state.writes_locked.load(std::sync::atomic::Ordering::SeqCst),
+        startup_note: state.startup_note.lock().ok().and_then(|n| n.clone()),
     }
 }
 
@@ -96,6 +117,8 @@ pub fn vault_init(state: State<AppState>, path: String, password: String) -> Res
     }
     *state.vault.lock().unwrap() = Some(vault);
     state.unlock_guard.lock().unwrap().reset();
+    grant_grace_if_configured(&state);
+    let _ = crate::sys::adopt_ssh_config(&root);
 
     Ok(InitResult {
         recovery_key,
@@ -103,7 +126,7 @@ pub fn vault_init(state: State<AppState>, path: String, password: String) -> Res
     })
 }
 
-fn ensure_loaded(state: &State<AppState>) -> Result<()> {
+fn ensure_loaded(state: &AppState) -> Result<()> {
     let cfg_path = {
         let cfg = state.config.lock().unwrap();
         cfg.workspace_path.clone()
@@ -118,7 +141,7 @@ fn ensure_loaded(state: &State<AppState>) -> Result<()> {
 
 /// 用访问密码解锁（带限速）。
 #[tauri::command]
-pub fn vault_unlock(state: State<AppState>, password: String) -> Result<()> {
+pub fn vault_unlock(app: AppHandle, state: State<AppState>, password: String) -> Result<()> {
     {
         let guard = state.unlock_guard.lock().unwrap();
         if guard.remaining_ms() > 0 {
@@ -130,7 +153,11 @@ pub fn vault_unlock(state: State<AppState>, password: String) -> Result<()> {
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
     match v.unlock_with_password(&password) {
         Ok(()) => {
+            drop(vault);
             state.unlock_guard.lock().unwrap().reset();
+            grant_grace_if_configured(&state);
+            begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
+            schedule_after_unlock(app);
             Ok(())
         }
         Err(e) => {
@@ -142,19 +169,69 @@ pub fn vault_unlock(state: State<AppState>, password: String) -> Result<()> {
 
 /// 用恢复密钥解锁（忘记密码/换机）。
 #[tauri::command]
-pub fn vault_unlock_recovery(state: State<AppState>, recovery_key: String) -> Result<()> {
+pub fn vault_unlock_recovery(app: AppHandle, state: State<AppState>, recovery_key: String) -> Result<()> {
     ensure_loaded(&state)?;
     let mut vault = state.vault.lock().unwrap();
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
-    v.unlock_with_recovery(&recovery_key)
+    v.unlock_with_recovery(&recovery_key)?;
+    drop(vault);
+    grant_grace_if_configured(&state);
+    begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
+    schedule_after_unlock(app);
+    Ok(())
 }
 
 /// 锁定：清零内存中的 MK。
 #[tauri::command]
 pub fn vault_lock(state: State<AppState>) {
+    lock_in_memory(&state);
+}
+
+pub fn lock_in_memory(state: &AppState) {
     if let Some(v) = state.vault.lock().unwrap().as_mut() {
         v.lock();
     }
+    state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut n) = state.startup_note.lock() {
+        *n = None;
+    }
+}
+
+/// 按免验证设置尝试静默解锁。`grace_days == 0` 或会话过期时返回 false。
+pub fn try_grace_unlock_silent(state: &AppState) -> bool {
+    {
+        let vault = state.vault.lock().unwrap();
+        if vault.as_ref().is_some_and(|v| v.is_unlocked()) {
+            return true;
+        }
+    }
+    let days = state.config.lock().unwrap().grace_days;
+    if days == 0 {
+        return false;
+    }
+    if ensure_loaded(state).is_err() {
+        return false;
+    }
+    let workspace_id = {
+        let vault = state.vault.lock().unwrap();
+        match vault.as_ref() {
+            Some(v) => v.workspace_id().to_string(),
+            None => return false,
+        }
+    };
+    let Ok(mk) = session::try_restore(&workspace_id) else {
+        return false;
+    };
+    {
+        let mut vault = state.vault.lock().unwrap();
+        let Some(v) = vault.as_mut() else {
+            return false;
+        };
+        if v.unlock_with_master_key(MasterKey::from_bytes(mk)).is_err() {
+            return false;
+        }
+    }
+    true
 }
 
 /// 修改访问密码（需正确旧密码）。
@@ -163,7 +240,11 @@ pub fn change_password(state: State<AppState>, old_password: String, new_passwor
     ensure_loaded(&state)?;
     let mut vault = state.vault.lock().unwrap();
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
-    v.change_password(&old_password, &new_password)
+    v.change_password(&old_password, &new_password)?;
+    drop(vault);
+    session::clear();
+    grant_grace_if_configured(&state);
+    Ok(())
 }
 
 /// 轮换恢复密钥（需已解锁），返回新恢复密钥。
@@ -177,4 +258,157 @@ pub fn rotate_recovery_key(state: State<AppState>) -> Result<InitResult> {
         recovery_key,
         workspace_id,
     })
+}
+
+fn grant_grace_if_configured(state: &AppState) {
+    let days = state.config.lock().unwrap().grace_days;
+    if days == 0 {
+        session::clear();
+        return;
+    }
+    let vault = state.vault.lock().unwrap();
+    let Some(v) = vault.as_ref() else {
+        return;
+    };
+    if let Ok(mk) = v.master_key_bytes() {
+        let _ = session::grant(v.workspace_id(), &mk, days);
+    }
+}
+
+fn load_agent_best_effort(state: &AppState) {
+    {
+        let env = state.agent_env.lock().unwrap().clone();
+        if !crate::agent::is_ready(&env) {
+            if let Ok(started) = crate::agent::ensure() {
+                *state.agent_env.lock().unwrap() = started;
+            }
+        }
+    }
+    let env = state.agent_env.lock().unwrap().clone();
+    let vault = state.vault.lock().unwrap();
+    let Some(v) = vault.as_ref() else {
+        return;
+    };
+    if !v.is_unlocked() {
+        return;
+    }
+    if let Ok(data) = crate::store::load_data(v) {
+        for identity in &data.identities {
+            if let Some(key_id) = &identity.key_id {
+                let _ = crate::agent::load_key(v, &env, key_id);
+            }
+        }
+    }
+}
+
+/// 启动时尝试用未过期的本机会话解锁并加载 agent。
+#[tauri::command]
+pub fn vault_try_grace_unlock(app: AppHandle, state: State<AppState>) -> Result<bool> {
+    let ok = try_grace_unlock_silent(&state);
+    if ok {
+        begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
+        schedule_after_unlock(app);
+    }
+    Ok(ok)
+}
+
+fn begin_write_lock(state: &AppState, app: &AppHandle, note: &str) {
+    state.writes_locked.store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut n) = state.startup_note.lock() {
+        *n = Some(note.to_string());
+    }
+    let _ = app.emit(
+        "writes-lock",
+        serde_json::json!({ "locked": true, "note": note }),
+    );
+}
+
+fn end_write_lock(state: &AppState, app: &AppHandle) {
+    state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut n) = state.startup_note.lock() {
+        *n = None;
+    }
+    let _ = app.emit("writes-lock", serde_json::json!({ "locked": false, "note": null }));
+    let _ = app.emit("startup-ready", serde_json::json!({}));
+}
+
+fn set_startup_note(state: &AppState, app: &AppHandle, note: &str) {
+    if let Ok(mut n) = state.startup_note.lock() {
+        *n = Some(note.to_string());
+    }
+    let _ = app.emit(
+        "writes-lock",
+        serde_json::json!({ "locked": true, "note": note }),
+    );
+}
+
+/// 解锁后的慢活：先拉云端，再补 SSH / 加载 agent。不挡进入主界面。
+pub(crate) fn schedule_after_unlock(app: AppHandle) {
+    let state = app.state::<AppState>();
+    begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
+    if state.bootstrap_busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        if let Some(p) = state.config.lock().ok().and_then(|c| c.workspace_path.clone()) {
+            let _ = crate::sys::adopt_ssh_config(std::path::Path::new(&p));
+        }
+        set_startup_note(&state, &app, "正在从云端拉取身份数据…");
+        let _ = crate::sync::scheduler::run(&app, "startup");
+        set_startup_note(&state, &app, "正在补齐 SSH 配置…");
+        {
+            let vault = match state.vault.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    state.bootstrap_busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                    end_write_lock(&state, &app);
+                    return;
+                }
+            };
+            if let Some(v) = vault.as_ref() {
+                if v.is_unlocked() {
+                    let _ = crate::commands::write::reconcile_ssh_hosts(v);
+                }
+            }
+        }
+        set_startup_note(&state, &app, "正在加载 ssh-agent…");
+        load_agent_best_effort(&state);
+        state.bootstrap_busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        let still_unlocked = state
+            .vault
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|v| v.is_unlocked()))
+            .unwrap_or(false);
+        if still_unlocked {
+            end_write_lock(&state, &app);
+        } else {
+            state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+}
+
+#[tauri::command]
+pub fn set_launch_at_login(state: State<AppState>, enabled: bool) -> Result<()> {
+    autostart::set_enabled(enabled)?;
+    let mut cfg = state.config.lock().unwrap();
+    cfg.launch_at_login = enabled;
+    cfg.save()
+}
+
+#[tauri::command]
+pub fn set_grace_days(state: State<AppState>, days: u32) -> Result<()> {
+    let days = session::clamp_days(days);
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.grace_days = days;
+        cfg.save()?;
+    }
+    if days == 0 {
+        session::clear();
+    } else {
+        grant_grace_if_configured(&state);
+    }
+    Ok(())
 }

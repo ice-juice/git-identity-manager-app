@@ -125,6 +125,7 @@ pub fn import_private_key(vault: &Vault, req: ImportRequest) -> Result<KeyRecord
         has_passphrase: encrypted,
         weak,
         source_path: req.source_path.clone(),
+        deployed_path: None,
         imported_at: now_iso8601(),
     };
     data.keys.push(record.clone());

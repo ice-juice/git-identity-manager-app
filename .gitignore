@@ -8,8 +8,16 @@ target/
 *.enc
 *.key
 vault.json
+*.gambackup
 /workspace/
 /.vault/
+
+# 本机安装包与可执行文件（含私钥材料风险，不入库）
+/release/
+*.exe
+*.msi
+*.dmg
+*.appimage
 
 # 环境
 .env
@@ -20,6 +28,3 @@ vault.json
 Thumbs.db
 .idea/
 .vscode/
-
-# docs 是独立 git 仓库（自管理），主仓库不追踪，避免嵌入 gitlink
-/docs/

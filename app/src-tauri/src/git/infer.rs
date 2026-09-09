@@ -179,6 +179,7 @@ mod tests {
             key_id: None,
             owners: owners.iter().map(|s| s.to_string()).collect(),
             strict_mode: false,
+            updated_at: String::new(),
         }
     }
 

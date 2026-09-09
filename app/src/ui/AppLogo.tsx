@@ -1,0 +1,290 @@
+import React from "react";
+
+interface AppLogoProps {
+  size?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+export const AppLogo: React.FC<AppLogoProps> = ({ size = 26, className = "", style }) => {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 512 512"
+      width={size}
+      height={size}
+      className={`app-logo ${className}`}
+      style={{ display: "block", flexShrink: 0, borderRadius: Math.round(size * 0.22), ...style }}
+    >
+      <defs>
+        {/* Background Gradient */}
+        <linearGradient id="octoBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#090d16" />
+          <stop offset="45%" stopColor="#16183c" />
+          <stop offset="100%" stopColor="#080a12" />
+        </linearGradient>
+
+        {/* Border Glow */}
+        <linearGradient id="octoBorderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#818cf8" stopOpacity="0.85" />
+          <stop offset="50%" stopColor="#6366f1" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.75" />
+        </linearGradient>
+
+        {/* Center Radial Glow */}
+        <radialGradient id="octoCenterGlow" cx="50%" cy="38%" r="58%">
+          <stop offset="0%" stopColor="#6366f1" stopOpacity="0.4" />
+          <stop offset="50%" stopColor="#4338ca" stopOpacity="0.15" />
+          <stop offset="100%" stopColor="#16183c" stopOpacity="0" />
+        </radialGradient>
+
+        {/* Octocat Body Gradient */}
+        <linearGradient id="octoCatBodyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#2d3748" />
+          <stop offset="45%" stopColor="#1a202c" />
+          <stop offset="100%" stopColor="#0f172a" />
+        </linearGradient>
+
+        {/* Cat Rim Lighting */}
+        <linearGradient id="octoCatRimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#e0e7ff" />
+          <stop offset="50%" stopColor="#818cf8" />
+          <stop offset="100%" stopColor="#38bdf8" />
+        </linearGradient>
+
+        {/* Inner Ear Pink Glow */}
+        <linearGradient id="octoCatEarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#f472b6" stopOpacity="0.8" />
+          <stop offset="100%" stopColor="#a855f7" stopOpacity="0.3" />
+        </linearGradient>
+
+        {/* Golden Key Gradient */}
+        <linearGradient id="octoGoldLight" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#fffbeb" />
+          <stop offset="20%" stopColor="#fde047" />
+          <stop offset="60%" stopColor="#f59e0b" />
+          <stop offset="100%" stopColor="#b45309" />
+        </linearGradient>
+
+        {/* Golden Key Shadow */}
+        <linearGradient id="octoGoldDark" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#b45309" />
+          <stop offset="100%" stopColor="#78350f" />
+        </linearGradient>
+
+        {/* Master Ring Gradient */}
+        <linearGradient id="octoRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#fef08a" />
+          <stop offset="35%" stopColor="#f59e0b" />
+          <stop offset="75%" stopColor="#d97706" />
+          <stop offset="100%" stopColor="#92400e" />
+        </linearGradient>
+
+        {/* Glow & Shadow Filters */}
+        <filter id="octoGlow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="8" result="blur" />
+          <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
+
+        <filter id="octoKeyShadow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="8" stdDeviation="10" floodColor="#000000" floodOpacity="0.65" />
+          <feDropShadow dx="0" dy="2" stdDeviation="4" floodColor="#f59e0b" floodOpacity="0.35" />
+        </filter>
+      </defs>
+
+      {/* 1. Background Rounded App Tile */}
+      <rect x="20" y="20" width="472" height="472" rx="104" fill="url(#octoBgGrad)" />
+      <rect x="20" y="20" width="472" height="472" rx="104" fill="url(#octoCenterGlow)" />
+      <rect x="20" y="20" width="472" height="472" rx="104" fill="none" stroke="url(#octoBorderGrad)" strokeWidth="3" />
+
+      {/* 2. Git Network Orbits */}
+      <g opacity="0.32">
+        <circle cx="256" cy="245" r="190" fill="none" stroke="#818cf8" strokeWidth="1.5" strokeDasharray="6 8" />
+        <circle cx="256" cy="245" r="140" fill="none" stroke="#38bdf8" strokeWidth="1" strokeOpacity="0.5" />
+        <circle cx="256" cy="55" r="4.5" fill="#38bdf8" />
+        <circle cx="446" cy="245" r="4.5" fill="#818cf8" />
+        <circle cx="256" cy="435" r="4.5" fill="#c084fc" />
+        <circle cx="66" cy="245" r="4.5" fill="#38bdf8" />
+      </g>
+
+      {/* 3. GitHub Octocat Mascot */}
+      <g filter="url(#octoGlow)">
+        {/* Octocat Body */}
+        <path
+          d="M190 235
+             C170 245 150 268 142 300
+             C136 325 155 350 185 348
+             C215 346 297 346 327 348
+             C357 350 376 325 370 300
+             C362 268 342 245 322 235 Z"
+          fill="url(#octoCatBodyGrad)"
+          stroke="url(#octoCatRimGrad)"
+          strokeWidth="2.5"
+        />
+
+        {/* Head with Classic Ears */}
+        <path
+          d="M174 158
+             C158 92 188 74 208 84
+             C230 96 244 122 256 128
+             C268 122 282 96 304 84
+             C324 74 354 92 338 158
+             C368 190 372 232 356 265
+             C336 295 296 308 256 308
+             C216 308 176 295 156 265
+             C140 232 144 190 174 158 Z"
+          fill="url(#octoCatBodyGrad)"
+          stroke="url(#octoCatRimGrad)"
+          strokeWidth="3"
+        />
+
+        {/* Inner Ears */}
+        <path d="M194 105 C186 112 181 128 184 142 C192 134 204 114 194 105 Z" fill="url(#octoCatEarGrad)" />
+        <path d="M318 105 C326 112 331 128 328 142 C320 134 308 114 318 105 Z" fill="url(#octoCatEarGrad)" />
+
+        {/* Muzzle */}
+        <path
+          d="M196 178
+             C182 195 182 225 198 240
+             C216 256 296 256 314 240
+             C330 225 330 195 316 178
+             C300 165 280 174 256 174
+             C232 174 212 165 196 178 Z"
+          fill="#0c1322"
+          stroke="#4f46e5"
+          strokeWidth="1.5"
+          opacity="0.95"
+        />
+
+        {/* Expressive Eyes */}
+        <ellipse cx="225" cy="208" rx="8.5" ry="11.5" fill="#38bdf8" />
+        <circle cx="222.5" cy="204.5" r="3.2" fill="#ffffff" />
+        <circle cx="227.5" cy="212" r="1.5" fill="#ffffff" opacity="0.8" />
+
+        <ellipse cx="287" cy="208" rx="8.5" ry="11.5" fill="#38bdf8" />
+        <circle cx="284.5" cy="204.5" r="3.2" fill="#ffffff" />
+        <circle cx="289.5" cy="212" r="1.5" fill="#ffffff" opacity="0.8" />
+
+        {/* Nose & Smile */}
+        <polygon points="256,218 252.5,223 259.5,223" fill="#f472b6" />
+        <path d="M252.5,225 Q256,229 259.5,225" fill="none" stroke="#a5b4fc" strokeWidth="1.5" strokeLinecap="round" />
+
+        {/* Whiskers */}
+        <path d="M185 212 L160 208 M184 219 L156 222" stroke="#818cf8" strokeWidth="1.5" strokeLinecap="round" opacity="0.85" />
+        <path d="M327 212 L352 208 M328 219 L356 222" stroke="#818cf8" strokeWidth="1.5" strokeLinecap="round" opacity="0.85" />
+      </g>
+
+      {/* 4. Three Master Keys on Ring + Octocat's Holding Tentacle */}
+      <g filter="url(#octoKeyShadow)">
+        {/* (A) Master Keyring */}
+        <circle cx="256" cy="319" r="46" fill="none" stroke="url(#octoGoldDark)" strokeWidth="11" />
+        <circle cx="256" cy="318" r="46" fill="none" stroke="url(#octoRingGrad)" strokeWidth="9" />
+        <circle cx="256" cy="317" r="47.5" fill="none" stroke="#fffbeb" strokeWidth="1.5" strokeDasharray="50 180" strokeLinecap="round" opacity="0.9" />
+
+        {/* (B) Left Key */}
+        <g transform="rotate(-22 256 318)">
+          <circle cx="256" cy="364" r="16" fill="url(#octoGoldDark)" />
+          <circle cx="256" cy="363" r="15" fill="url(#octoGoldLight)" />
+          <circle cx="256" cy="363" r="8.5" fill="#16183c" />
+
+          <rect x="252" y="378" width="8" height="84" rx="4" fill="url(#octoGoldDark)" />
+          <rect x="251" y="377" width="8" height="84" rx="4" fill="url(#octoGoldLight)" />
+          <rect x="252" y="379" width="2" height="80" rx="1" fill="#fffbeb" opacity="0.8" />
+
+          <path d="M251 432 L234 432 C231 432 229 435 229 438 L229 442 C229 445 231 447 234 447 L251 447 Z" fill="url(#octoGoldLight)" />
+          <path d="M251 450 L238 450 C236 450 234 452 234 454 L234 457 C234 459 236 461 238 461 L251 461 Z" fill="url(#octoGoldLight)" />
+          <circle cx="236" cy="439.5" r="2" fill="#16183c" />
+        </g>
+
+        {/* (C) Right Key */}
+        <g transform="rotate(22 256 318)">
+          <circle cx="256" cy="364" r="16" fill="url(#octoGoldDark)" />
+          <circle cx="256" cy="363" r="15" fill="url(#octoGoldLight)" />
+          <circle cx="256" cy="363" r="8.5" fill="#16183c" />
+
+          <rect x="252" y="378" width="8" height="84" rx="4" fill="url(#octoGoldDark)" />
+          <rect x="251" y="377" width="8" height="84" rx="4" fill="url(#octoGoldLight)" />
+          <rect x="252" y="379" width="2" height="80" rx="1" fill="#fffbeb" opacity="0.8" />
+
+          <path d="M259 432 L276 432 C279 432 281 435 281 438 L281 442 C281 445 279 447 276 447 L259 447 Z" fill="url(#octoGoldLight)" />
+          <path d="M259 450 L272 450 C274 450 276 452 276 454 L276 457 C276 459 274 461 272 461 L259 461 Z" fill="url(#octoGoldLight)" />
+          <circle cx="274" cy="439.5" r="2" fill="#16183c" />
+        </g>
+
+        {/* (D) Center Master Key */}
+        <g transform="translate(0, 0)">
+          <circle cx="256" cy="366" r="27" fill="url(#octoGoldDark)" />
+          <circle cx="256" cy="364" r="26" fill="url(#octoGoldLight)" />
+          <circle cx="256" cy="364" r="17.5" fill="#090d16" />
+          <circle cx="256" cy="364" r="15.5" fill="none" stroke="url(#octoGoldLight)" strokeWidth="1.8" />
+
+          {/* User Identity Silhouette Inside Bow */}
+          <circle cx="256" cy="358" r="5.5" fill="url(#octoGoldLight)" />
+          <path d="M248.5 372 C248.5 367.5 252 366.5 256 366.5 C260 366.5 263.5 367.5 263.5 372 Z" fill="url(#octoGoldLight)" />
+
+          {/* Main Stem */}
+          <rect x="251" y="391" width="10" height="90" rx="5" fill="url(#octoGoldDark)" />
+          <rect x="250" y="390" width="10" height="90" rx="5" fill="url(#octoGoldLight)" />
+          <rect x="252" y="392" width="2.5" height="86" rx="1" fill="#fffbeb" opacity="0.9" />
+
+          {/* Master Bit */}
+          <path d="M260 445 L285 445 C288 445 290 447 290 450 L290 455 C290 458 288 460 285 460 L260 460 Z" fill="url(#octoGoldLight)" />
+          <circle cx="282" cy="452.5" r="2.5" fill="#090d16" />
+          <path d="M260 465 L277 465 C279 465 281 467 281 469 L281 473 C281 475 279 477 277 477 L260 477 Z" fill="url(#octoGoldLight)" />
+        </g>
+
+        {/* (E) Octocat's Holding Tentacle */}
+        <g>
+          <path
+            d="M242 260
+               C242 278 238 288 250 294
+               C262 298 274 290 270 276
+               C266 264 256 256 242 260 Z"
+            fill="#090d16"
+            opacity="0.6"
+          />
+
+          <path
+            d="M244 258
+               C240 274 236 292 248 300
+               C258 305 272 296 270 282
+               C268 268 258 254 244 258 Z"
+            fill="url(#octoCatBodyGrad)"
+            stroke="url(#octoCatRimGrad)"
+            strokeWidth="2.5"
+          />
+
+          <path
+            d="M246 292
+               C244 300 248 308 256 308
+               C264 308 268 300 266 292
+               C262 288 250 288 246 292 Z"
+            fill="url(#octoCatBodyGrad)"
+            stroke="url(#octoCatRimGrad)"
+            strokeWidth="2"
+          />
+
+          <circle cx="250" cy="298" r="3.2" fill="#38bdf8" />
+          <circle cx="259" cy="301" r="3.5" fill="#38bdf8" />
+          <circle cx="265" cy="296" r="3" fill="#38bdf8" />
+          <circle cx="249.5" cy="297" r="1.2" fill="#ffffff" />
+          <circle cx="258.5" cy="300" r="1.5" fill="#ffffff" />
+          <circle cx="264.5" cy="295" r="1.2" fill="#ffffff" />
+        </g>
+      </g>
+
+      {/* 5. Sparkles */}
+      <g transform="translate(136, 135)">
+        <path d="M0 -16 Q0 0 16 0 Q0 0 0 16 Q0 0 -16 0 Q0 0 0 -16 Z" fill="#ffffff" opacity="0.95" />
+        <circle cx="0" cy="0" r="2.5" fill="#ffffff" />
+      </g>
+      <g transform="translate(382, 385)">
+        <path d="M0 -15 Q0 0 15 0 Q0 0 0 15 Q0 0 -15 0 Q0 0 0 -15 Z" fill="#fde047" opacity="0.95" />
+        <circle cx="0" cy="0" r="2.5" fill="#ffffff" />
+      </g>
+      <g transform="translate(390, 150)">
+        <path d="M0 -10 Q0 0 10 0 Q0 0 0 10 Q0 0 -10 0 Q0 0 0 -10 Z" fill="#38bdf8" opacity="0.85" />
+      </g>
+    </svg>
+  );
+};
