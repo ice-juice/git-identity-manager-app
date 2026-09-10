@@ -410,7 +410,7 @@ fn extract_s3_error(xml: &str) -> String {
     }
 }
 
-pub const S3_CONFIG_FILE_KIND: &str = "git-account-manager-s3";
+pub const S3_CONFIG_FILE_KIND: &str = crate::identity::S3_KIND;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -440,7 +440,7 @@ pub fn read_s3_config_file(path: &std::path::Path) -> Result<S3Config> {
 
 pub fn parse_s3_config_file(raw: &str) -> Result<S3Config> {
     if let Ok(file) = serde_json::from_str::<S3ConfigFile>(raw) {
-        if file.kind != S3_CONFIG_FILE_KIND && !file.kind.is_empty() {
+        if !crate::identity::accepted_s3_kind(&file.kind) {
             return Err(AppError::Invalid("这不是本程序导出的 S3/R2 配置文件".into()));
         }
         return Ok(file.config);
@@ -473,5 +473,12 @@ mod tests {
         assert_eq!(got.bucket, "b");
         let raw = serde_json::to_string(&cfg).unwrap();
         assert_eq!(parse_s3_config_file(&raw).unwrap().access_key_id, "ak");
+        let legacy = serde_json::to_string(&S3ConfigFile {
+            kind: crate::identity::LEGACY_S3_KIND.into(),
+            version: 1,
+            config: cfg.clone(),
+        })
+        .unwrap();
+        assert_eq!(parse_s3_config_file(&legacy).unwrap().bucket, "b");
     }
 }

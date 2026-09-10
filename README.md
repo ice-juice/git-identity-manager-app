@@ -1,5 +1,9 @@
 # 御钥师 (Git Keymaster)
 
+仓库：[ice-juice/git-keymaster-app](https://github.com/ice-juice/git-keymaster-app)
+
+从旧版 `git-account-manager` 升级时，请先按 [标识重命名与数据迁移](docs/标识重命名与数据迁移.md) 备份再安装，避免找不到工作空间。
+
 > **优雅、安全、开箱即用的本地 Git 多身份与 SSH 密钥管理工作站**  
 > 专为需要在同一台计算机上安全管理多个 GitHub / GitLab / 自建 Git 服务器账号的开发者设计。
 
@@ -70,8 +74,8 @@
 
 ```bash
 # 1. 克隆代码仓库
-git clone <repo_url>
-cd local-git-account-manage
+git clone https://github.com/ice-juice/git-keymaster-app.git
+cd git-keymaster-app
 
 # 2. 安装前端依赖
 cd app

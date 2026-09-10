@@ -10,7 +10,7 @@ pub const DEFAULT_AUTO_SYNC_MINUTES: u32 = 30;
 pub const MIN_AUTO_SYNC_MINUTES: u32 = 5;
 pub const MAX_AUTO_SYNC_MINUTES: u32 = 24 * 60;
 /// 内置默认更新源仓库（出厂值，用户可覆盖）。
-pub const DEFAULT_UPDATE_REPO: &str = "ice-juice/git-identity-manager-app";
+pub const DEFAULT_UPDATE_REPO: &str = "ice-juice/git-keymaster-app";
 
 fn default_auto_sync_minutes() -> u32 {
     DEFAULT_AUTO_SYNC_MINUTES
@@ -236,10 +236,7 @@ impl Default for AppConfig {
 }
 
 pub fn config_dir() -> PathBuf {
-    let base = std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir());
-    base.join("git-account-manager")
+    crate::identity::app_config_dir()
 }
 
 fn config_file() -> PathBuf {
@@ -248,6 +245,7 @@ fn config_file() -> PathBuf {
 
 impl AppConfig {
     pub fn load() -> Self {
+        crate::identity::migrate_app_data();
         let path = config_file();
         let mut cfg = match std::fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),

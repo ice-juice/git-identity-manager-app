@@ -1,13 +1,14 @@
 //! `~/.ssh/config` 托管区块的安全增删改。
 //!
-//! 只在 `# ===== BEGIN/END managed by git-account-manager =====` 之间改写，
-//! 区块外的用户手写内容（含注释、空行）原样保留。
+//! 只在 `# ===== BEGIN/END managed by git-keymaster =====` 之间改写，
+//! 区块外的用户手写内容（含注释、空行）原样保留。读取时同时认旧标记。
 
+use crate::identity;
 use crate::ssh::config;
 use serde::{Deserialize, Serialize};
 
-pub const BEGIN_MARKER: &str = "# ===== BEGIN managed by git-account-manager =====";
-pub const END_MARKER: &str = "# ===== END managed by git-account-manager =====";
+pub const BEGIN_MARKER: &str = identity::SSH_BEGIN;
+pub const END_MARKER: &str = identity::SSH_END;
 
 /// 一个托管 Host 条目。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,12 +79,26 @@ fn parse_region(region_inner: &str) -> Vec<ManagedEntry> {
 }
 
 /// 拆分现有 config 为 (区块前, 托管条目, 区块后)。无托管区块时条目为空。
+fn marker_span(lines: &[&str]) -> Option<(usize, usize)> {
+    for (begin_m, end_m) in [
+        (BEGIN_MARKER, END_MARKER),
+        (identity::LEGACY_SSH_BEGIN, identity::LEGACY_SSH_END),
+    ] {
+        let begin = lines.iter().position(|l| l.trim() == begin_m);
+        let end = lines.iter().position(|l| l.trim() == end_m);
+        if let (Some(b), Some(e)) = (begin, end) {
+            if b < e {
+                return Some((b, e));
+            }
+        }
+    }
+    None
+}
+
 fn split(existing: &str) -> (String, Vec<ManagedEntry>, String) {
     let lines: Vec<&str> = existing.lines().collect();
-    let begin = lines.iter().position(|l| l.trim() == BEGIN_MARKER);
-    let end = lines.iter().position(|l| l.trim() == END_MARKER);
-    match (begin, end) {
-        (Some(b), Some(e)) if b < e => {
+    match marker_span(&lines) {
+        Some((b, e)) => {
             let before = lines[..b].join("\n");
             let inner = lines[b + 1..e].join("\n");
             let after = if e + 1 < lines.len() {
@@ -93,7 +108,7 @@ fn split(existing: &str) -> (String, Vec<ManagedEntry>, String) {
             };
             (before, parse_region(&inner), after)
         }
-        _ => (existing.to_string(), Vec::new(), String::new()),
+        None => (existing.to_string(), Vec::new(), String::new()),
     }
 }
 
@@ -289,5 +304,7 @@ mod tests {
         assert!(out.contains("Host keep"));
         assert!(out.contains("Host new"));
         assert!(!out.contains("Host old"));
+        assert!(out.contains(BEGIN_MARKER));
+        assert!(!out.contains(crate::identity::LEGACY_SSH_BEGIN));
     }
 }

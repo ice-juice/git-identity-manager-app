@@ -50,7 +50,7 @@ export function Keys() {
     setMsg("");
     setBusy(true);
     try {
-      const k = await api.generateKey(genComment || "git-account-manager", genName || undefined);
+      const k = await api.generateKey(genComment || "git-keymaster", genName || undefined);
       setMsg(`已生成密钥「${k.name}」，指纹 ${k.fingerprint}`);
       setShowGen(false);
       setGenComment("");

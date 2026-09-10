@@ -25,8 +25,14 @@ pub enum Decision {
 
 fn lock_path() -> std::path::PathBuf {
     let mut p = std::env::temp_dir();
-    p.push("com.jeck.gitaccountmanager.instance.lock");
+    p.push(crate::identity::INSTANCE_LOCK);
     p
+}
+
+fn lock_candidates() -> [std::path::PathBuf; 2] {
+    let mut legacy = std::env::temp_dir();
+    legacy.push(crate::identity::LEGACY_INSTANCE_LOCK);
+    [lock_path(), legacy]
 }
 
 fn current_exe_string() -> String {
@@ -44,7 +50,9 @@ struct LockInfo {
 }
 
 fn read_lock() -> Option<LockInfo> {
-    let content = fs::read_to_string(lock_path()).ok()?;
+    let content = lock_candidates()
+        .into_iter()
+        .find_map(|p| fs::read_to_string(p).ok())?;
     let mut lines = content.lines();
     let pid: u32 = lines.next()?.trim().parse().ok()?;
     let exe = lines.next().unwrap_or("").trim().to_string();
@@ -139,6 +147,7 @@ fn write_lock() {
         port,
         token
     );
+    let _ = fs::remove_file(&lock_candidates()[1]);
     let _ = fs::write(lock_path(), content);
     if let Some(listener) = listener {
         let _ = thread::Builder::new()
@@ -151,7 +160,9 @@ fn write_lock() {
 pub fn release_lock() {
     if let Some(info) = read_lock() {
         if info.pid == std::process::id() {
-            let _ = fs::remove_file(lock_path());
+            for p in lock_candidates() {
+                let _ = fs::remove_file(p);
+            }
         }
     }
 }

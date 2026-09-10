@@ -142,7 +142,7 @@ mod tests {
         let urls = resolve_endpoints_with(&src, &ctx()).unwrap();
         assert_eq!(
             urls[0].as_str(),
-            "https://github.com/ice-juice/git-identity-manager-app/releases/latest/download/latest.json"
+            "https://github.com/ice-juice/git-keymaster-app/releases/latest/download/latest.json"
         );
     }
 

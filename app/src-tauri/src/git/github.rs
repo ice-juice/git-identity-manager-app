@@ -7,7 +7,7 @@ use crate::net;
 use serde::Serialize;
 
 const API: &str = "https://api.github.com";
-const UA: &str = "git-account-manager";
+const UA: &str = crate::identity::USER_AGENT;
 
 fn client(proxy: Option<&NetworkProxy>) -> Result<reqwest::blocking::Client> {
     let mut builder = reqwest::blocking::Client::builder()

@@ -163,7 +163,7 @@ pub fn ssh_helper_status() -> SshProxyHelper {
 /// 经代理 GET https://github.com，成功返回毫秒。
 pub fn test_github_https(p: &NetworkProxy) -> Result<u128> {
     let mut builder = reqwest::blocking::Client::builder()
-        .user_agent("git-account-manager")
+        .user_agent(crate::identity::USER_AGENT)
         .timeout(std::time::Duration::from_secs(12))
         .redirect(reqwest::redirect::Policy::limited(4));
     builder = apply_reqwest_blocking(builder, p)?;

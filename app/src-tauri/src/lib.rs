@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod app_config;
+pub mod identity;
 pub mod autostart;
 mod clipboard;
 pub mod commands;
@@ -34,6 +35,9 @@ use tauri::{Emitter, Manager};
 pub fn run() {
     // 从访达 / 开始菜单启动时 PATH 往往没有 Homebrew、Git for Windows。
     crate::sys::augment_search_path();
+    crate::identity::migrate_app_data();
+    crate::sys::migrate_legacy_ssh_names();
+    crate::agent::unify::migrate_legacy_scripts();
 
     #[cfg(windows)]
     {

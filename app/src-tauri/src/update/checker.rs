@@ -199,7 +199,7 @@ async fn fetch_latest_github_tag(
         .map_err(|e| AppError::Other(format!("HTTP 客户端构建失败：{e}")))?;
     let resp = client
         .get(&url)
-        .header("User-Agent", "git-account-manager")
+        .header("User-Agent", crate::identity::USER_AGENT)
         .header("Accept", "application/vnd.github+json")
         .timeout(std::time::Duration::from_secs(15))
         .send()
@@ -245,7 +245,7 @@ mod tests {
         let src = UpdateSource::default();
         assert_eq!(
             manual_download_url(&src).as_deref(),
-            Some("https://github.com/ice-juice/git-identity-manager-app/releases")
+            Some("https://github.com/ice-juice/git-keymaster-app/releases")
         );
     }
 
@@ -286,7 +286,7 @@ mod tests {
         let url = crate::update::source::resolve_endpoints(&src).unwrap()[0].clone();
         let resp = reqwest::blocking::Client::new()
             .get(url.as_str())
-            .header("User-Agent", "git-account-manager-test")
+            .header("User-Agent", "git-keymaster-test")
             .timeout(std::time::Duration::from_secs(20))
             .send()
             .expect("应能访问默认更新源");

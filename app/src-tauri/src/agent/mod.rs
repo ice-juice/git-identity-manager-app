@@ -146,7 +146,7 @@ const STALE_SOCKET_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// 固定套接字，供终端与本进程共用同一只 Git ssh-agent。
 pub fn stable_git_sock_path() -> PathBuf {
-    git_agent_dir().join("git-account-manager")
+    git_agent_dir().join(crate::identity::AGENT_SOCK)
 }
 
 fn git_agent_dir() -> PathBuf {
@@ -154,7 +154,7 @@ fn git_agent_dir() -> PathBuf {
 }
 
 fn stable_git_pid_path() -> PathBuf {
-    git_agent_dir().join("git-account-manager.pid")
+    git_agent_dir().join(crate::identity::AGENT_PID)
 }
 
 fn persist_git_agent_meta(env: &AgentEnv, winpid: Option<u32>) {
@@ -608,9 +608,9 @@ fn run_ssh_add(env: &AgentEnv, args: &[&str], stdin: Option<&[u8]>) -> Result<(S
     sys::wait_output_timeout(child, Duration::from_secs(8), "ssh-add")
 }
 
-/// 启动 Git 自带 ssh-agent，并绑到 `~/.ssh/agent/git-account-manager`。
+/// 启动 Git 自带 ssh-agent，并绑到 `~/.ssh/agent/git-keymaster`。
 ///
-/// 本机 Git for Windows（OpenSSH 10.5p1）实测：`-a /c/Users/.../git-account-manager`
+/// 本机 Git for Windows（OpenSSH 10.5p1）实测：`-a /c/Users/.../git-keymaster`
 /// 会把套接字落到该文件，并在 `-s` 输出里回显同一路径。不再回退到无 `-a` 的
 /// `ssh-agent -s`——那会在目录里留下 `s.*.agent.*` 随机套接字，复用从未生效。
 pub fn start_git_agent() -> Result<AgentEnv> {
@@ -789,12 +789,12 @@ mod tests {
 
     #[test]
     fn from_msys_sock_path_roundtrips_drive() {
-        let msys = "/c/Users/Jeck/.ssh/agent/git-account-manager";
+        let msys = "/c/Users/Jeck/.ssh/agent/git-keymaster";
         let win = from_msys_sock_path(msys);
         assert_eq!(
             win,
             PathBuf::from(format!(
-                "C:{sep}Users{sep}Jeck{sep}.ssh{sep}agent{sep}git-account-manager",
+                "C:{sep}Users{sep}Jeck{sep}.ssh{sep}agent{sep}git-keymaster",
                 sep = std::path::MAIN_SEPARATOR
             ))
         );
@@ -810,6 +810,7 @@ mod tests {
 
     #[test]
     fn managed_sock_only_matches_ssh_agent_dir() {
+        assert!(is_managed_agent_sock("/c/Users/Jeck/.ssh/agent/git-keymaster"));
         assert!(is_managed_agent_sock("/c/Users/Jeck/.ssh/agent/git-account-manager"));
         assert!(is_managed_agent_sock(r"C:\Users\Jeck\.ssh\agent\s.abc.agent.xyz"));
         assert!(!is_managed_agent_sock("/c/Users/Jeck/.ssh/agent-p0a-test/git-account-manager"));
@@ -819,7 +820,7 @@ mod tests {
 
     #[test]
     fn clear_managed_sock_skips_foreign_and_stable() {
-        let stable = "/c/Users/Jeck/.ssh/agent/git-account-manager";
+        let stable = "/c/Users/Jeck/.ssh/agent/git-keymaster";
         assert!(!should_clear_managed_auth_sock(stable, stable));
         assert!(!should_clear_managed_auth_sock("/tmp/ssh-AbC/agent.1", stable));
         assert!(should_clear_managed_auth_sock(
@@ -843,12 +844,12 @@ mod tests {
             ("/c/Users/x/.ssh/agent/new2".into(), Some(t5)),
         ];
         let got = select_probe_socks(
-            Some("/c/Users/x/.ssh/agent/git-account-manager"),
+            Some("/c/Users/x/.ssh/agent/git-keymaster"),
             others,
             MAX_PROBE_CANDIDATES,
         );
         assert_eq!(got.len(), 3);
-        assert_eq!(got[0], "/c/Users/x/.ssh/agent/git-account-manager");
+        assert_eq!(got[0], "/c/Users/x/.ssh/agent/git-keymaster");
         assert_eq!(got[1], "/c/Users/x/.ssh/agent/new2");
         assert_eq!(got[2], "/c/Users/x/.ssh/agent/new1");
         assert!(!got.iter().any(|s| s.ends_with("old1") || s.ends_with("old2") || s.ends_with("mid")));

@@ -248,11 +248,39 @@ pub fn home_ssh_config() -> PathBuf {
 }
 
 /// `~/.ssh` 下的配置镜像文件名。相对 Include 对 Windows OpenSSH 和 Git/MSYS ssh 都有效。
-pub const HOME_INCLUDED_CONFIG_NAME: &str = "git-account-manager.config";
+pub const HOME_INCLUDED_CONFIG_NAME: &str = crate::identity::SSH_INCLUDE;
 
 /// 本机 SSH 实际 Include 的镜像（与工作空间正本同步）。
 pub fn home_included_config() -> PathBuf {
     ssh_dir().join(HOME_INCLUDED_CONFIG_NAME)
+}
+
+fn legacy_home_included_config() -> PathBuf {
+    ssh_dir().join(crate::identity::LEGACY_SSH_INCLUDE)
+}
+
+/// 把旧镜像拷到新文件名，并把只含 Include 的系统入口改写成新 stub。旧文件不删。
+pub fn migrate_legacy_ssh_names() {
+    let old = legacy_home_included_config();
+    let new = home_included_config();
+    crate::identity::copy_file_if_missing(&old, &new);
+
+    let home = home_ssh_config();
+    let Ok(current) = std::fs::read_to_string(&home) else {
+        return;
+    };
+    if !is_system_include_stub(&current, std::path::Path::new("")) {
+        return;
+    }
+    let stub = home_include_stub();
+    if current == stub {
+        return;
+    }
+    if let Err(e) = crate::vault::atomic_write(&home, stub.as_bytes()) {
+        log::warn!("改写 ~/.ssh/config Include 入口失败：{e}");
+    } else {
+        log::info!("已将 ~/.ssh/config 的 Include 入口改为 {}", HOME_INCLUDED_CONFIG_NAME);
+    }
 }
 
 /// 工作空间内的 SSH config 正本，随身份数据一起同步。
@@ -283,7 +311,10 @@ fn include_line_targets_workspace(line: &str, workspace_config: &std::path::Path
     };
     let target = normalize_include_target(rest);
     target == HOME_INCLUDED_CONFIG_NAME
+        || target == crate::identity::LEGACY_SSH_INCLUDE
         || target == normalize_include_target(&ssh_path_for_include(&home_included_config()))
+        || target
+            == normalize_include_target(&ssh_path_for_include(&legacy_home_included_config()))
         || target == normalize_include_target(&ssh_path_for_include(workspace_config))
 }
 
@@ -355,7 +386,7 @@ fn file_newer(a: &std::path::Path, b: &std::path::Path) -> bool {
 
 fn home_include_stub() -> String {
     format!(
-        "# git-account-manager：真实 SSH 配置在工作空间，请勿在此文件编写 Host。\nInclude {HOME_INCLUDED_CONFIG_NAME}\n"
+        "# git-keymaster：真实 SSH 配置在工作空间，请勿在此文件编写 Host。\nInclude {HOME_INCLUDED_CONFIG_NAME}\n"
     )
 }
 
@@ -410,17 +441,19 @@ fn newest_sibling_backup(path: &std::path::Path) -> Option<std::path::PathBuf> {
 /// 撤销本程序对 `~/.ssh` 的改写：去掉 Include 入口与镜像，尽量恢复备份。
 pub fn revert_home_ssh_bridge() -> Result<Vec<String>> {
     let mut steps = Vec::new();
-    let included = home_included_config();
-    if included.exists() {
-        let _ = std::fs::remove_file(&included);
-        steps.push(format!("已删除 {}", included.display()));
+    for included in [home_included_config(), legacy_home_included_config()] {
+        if included.exists() {
+            let _ = std::fs::remove_file(&included);
+            steps.push(format!("已删除 {}", included.display()));
+        }
     }
     let home = home_ssh_config();
     let current = std::fs::read_to_string(&home).unwrap_or_default();
     let dummy = std::path::Path::new("");
     let ours = is_system_include_stub(&current, dummy)
         || text_is_include_only(&current)
-        || current.contains(HOME_INCLUDED_CONFIG_NAME);
+        || current.contains(HOME_INCLUDED_CONFIG_NAME)
+        || current.contains(crate::identity::LEGACY_SSH_INCLUDE);
     if ours {
         if let Some(bak) = newest_sibling_backup(&home) {
             std::fs::copy(&bak, &home)?;
@@ -439,7 +472,7 @@ pub fn revert_home_ssh_bridge() -> Result<Vec<String>> {
     Ok(steps)
 }
 
-/// 把工作空间正本镜像到 `~/.ssh/git-account-manager.config`，并改写系统入口为相对 Include。
+/// 把工作空间正本镜像到 `~/.ssh/git-keymaster.config`，并改写系统入口为相对 Include。
 pub fn ensure_home_ssh_bridge(workspace: &std::path::Path) -> Result<()> {
     let dest = workspace_ssh_config(workspace);
     let text = std::fs::read_to_string(&dest).unwrap_or_default();
@@ -477,7 +510,7 @@ pub fn adopt_ssh_config(workspace: &std::path::Path) -> Result<std::path::PathBu
     } else if !dest.exists() {
         crate::vault::atomic_write(
             &dest,
-            "# git-account-manager SSH config\n# Host blocks are written when you create an identity.\n".as_bytes(),
+            "# git-keymaster SSH config\n# Host blocks are written when you create an identity.\n".as_bytes(),
         )?;
     }
 
@@ -804,6 +837,10 @@ mod tests {
         assert!(!text_has_host_blocks("Include D:/x\n"));
         assert!(is_system_include_stub(
             "# c\nInclude git-account-manager.config\n",
+            dest
+        ));
+        assert!(is_system_include_stub(
+            "# c\nInclude git-keymaster.config\n",
             dest
         ));
     }

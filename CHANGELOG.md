@@ -13,6 +13,9 @@
 
 ## [Unreleased]
 
+### 优化功能
+- **本机标识统一为 git-keymaster**：数据目录、SSH Include、agent 套接字与安装标识一并更名；首次启动会从旧的 `git-account-manager` 路径拷贝，旧目录保留作备份
+
 ## [1.2.1] - 2026-09-10
 
 ### 新增功能

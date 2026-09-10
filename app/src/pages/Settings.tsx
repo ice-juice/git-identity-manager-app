@@ -245,7 +245,7 @@ function FactoryResetPanel({ onDone }: { onDone: () => Promise<void> }) {
   );
 }
 
-const DEFAULT_UPDATE_REPO = "ice-juice/git-identity-manager-app";
+const DEFAULT_UPDATE_REPO = "ice-juice/git-keymaster-app";
 
 function formatWhen(iso: string | null | undefined): string {
   if (!iso) return "尚未检查";

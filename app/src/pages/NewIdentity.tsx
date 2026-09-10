@@ -390,7 +390,7 @@ export function NewIdentity() {
     setMsg("");
     setBusy(true);
     try {
-      await api.uploadPublicKey(keyId, d.name.trim() || "git-account-manager");
+      await api.uploadPublicKey(keyId, d.name.trim() || "git-keymaster");
       set({ uploaded: true });
       setMsg("公钥已通过 PAT 上传到 GitHub");
     } catch (e) {

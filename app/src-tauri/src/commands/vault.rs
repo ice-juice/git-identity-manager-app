@@ -500,10 +500,15 @@ pub fn factory_reset(
         Ok(more) => steps.extend(more),
         Err(e) => steps.push(format!("还原 ~/.ssh 时部分失败：{e}")),
     }
-    let pid = crate::sys::ssh_dir().join("agent").join("git-account-manager.pid");
-    if pid.is_file() {
-        let _ = std::fs::remove_file(&pid);
-        steps.push("已删除本机 Git agent pid 记录".into());
+    for name in [
+        crate::identity::AGENT_PID,
+        crate::identity::LEGACY_AGENT_PID,
+    ] {
+        let pid = crate::sys::ssh_dir().join("agent").join(name);
+        if pid.is_file() {
+            let _ = std::fs::remove_file(&pid);
+            steps.push("已删除本机 Git agent pid 记录".into());
+        }
     }
 
     if let Some(path) = workspace {

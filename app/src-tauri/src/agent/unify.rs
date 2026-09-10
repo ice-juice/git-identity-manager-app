@@ -10,14 +10,15 @@
 
 use super::AgentEnv;
 use crate::error::{AppError, Result};
+use crate::identity;
 use crate::sys;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-const BEGIN: &str = "# >>> git-account-manager agent >>>";
-const END: &str = "# <<< git-account-manager agent <<<";
-const ENV_PS1: &str = "git-account-manager-agent.env.ps1";
-const ENV_SH: &str = "git-account-manager-agent.env.sh";
+const BEGIN: &str = identity::AGENT_BEGIN;
+const END: &str = identity::AGENT_END;
+const ENV_PS1: &str = identity::ENV_PS1;
+const ENV_SH: &str = identity::ENV_SH;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,25 +93,29 @@ pub fn normalize_ssh_path(raw: &str) -> String {
         .to_ascii_lowercase()
 }
 
-pub fn upsert_marked_block(existing: &str, inner: &str) -> String {
-    let block = format!("{BEGIN}\n{inner}\n{END}\n");
-    if let Some(start) = existing.find(BEGIN) {
-        if let Some(rel_end) = existing[start..].find(END) {
-            let mut end = start + rel_end + END.len();
-            let rest = &existing[end..];
+fn strip_marked_pair(existing: &str, begin: &str, end: &str) -> String {
+    if let Some(start) = existing.find(begin) {
+        if let Some(rel_end) = existing[start..].find(end) {
+            let mut end_idx = start + rel_end + end.len();
+            let rest = &existing[end_idx..];
             if rest.starts_with("\r\n") {
-                end += 2;
+                end_idx += 2;
             } else if rest.starts_with('\n') {
-                end += 1;
+                end_idx += 1;
             }
             let mut out = String::new();
             out.push_str(&existing[..start]);
-            out.push_str(&block);
-            out.push_str(&existing[end..]);
+            out.push_str(&existing[end_idx..]);
             return out;
         }
     }
-    let mut s = existing.to_string();
+    existing.to_string()
+}
+
+pub fn upsert_marked_block(existing: &str, inner: &str) -> String {
+    let cleaned = remove_marked_block(existing);
+    let block = format!("{BEGIN}\n{inner}\n{END}\n");
+    let mut s = cleaned;
     if !s.is_empty() && !s.ends_with('\n') {
         s.push('\n');
     }
@@ -121,28 +126,25 @@ pub fn upsert_marked_block(existing: &str, inner: &str) -> String {
     s
 }
 
-/// 去掉本程序写入的标记块，用于一键还原。
+/// 去掉本程序写入的标记块（含旧标识），用于一键还原。
 pub fn remove_marked_block(existing: &str) -> String {
-    if let Some(start) = existing.find(BEGIN) {
-        if let Some(rel_end) = existing[start..].find(END) {
-            let mut end = start + rel_end + END.len();
-            let rest = &existing[end..];
-            if rest.starts_with("\r\n") {
-                end += 2;
-            } else if rest.starts_with('\n') {
-                end += 1;
-            }
-            let mut out = String::new();
-            out.push_str(&existing[..start]);
-            out.push_str(&existing[end..]);
-            return out.trim_start_matches(['\r', '\n']).to_string();
-        }
-    }
-    existing.to_string()
+    let next = strip_marked_pair(existing, BEGIN, END);
+    strip_marked_pair(&next, identity::LEGACY_AGENT_BEGIN, identity::LEGACY_AGENT_END)
+        .trim_start_matches(['\r', '\n'])
+        .to_string()
 }
 
 fn profile_has_marker(text: &str) -> bool {
-    text.contains(BEGIN) && text.contains(END)
+    (text.contains(BEGIN) && text.contains(END))
+        || (text.contains(identity::LEGACY_AGENT_BEGIN)
+            && text.contains(identity::LEGACY_AGENT_END))
+}
+
+/// 把旧 agent 环境脚本拷到新文件名。旧文件不删。
+pub fn migrate_legacy_scripts() {
+    let dir = sys::ssh_dir();
+    crate::identity::copy_file_if_missing(&dir.join(identity::LEGACY_ENV_PS1), &dir.join(ENV_PS1));
+    crate::identity::copy_file_if_missing(&dir.join(identity::LEGACY_ENV_SH), &dir.join(ENV_SH));
 }
 
 fn write_text(path: &Path, text: &str) -> Result<()> {
@@ -669,7 +671,13 @@ pub fn revert() -> Result<Vec<String>> {
             steps.push(format!("已还原 {}", path.display()));
         }
     }
-    for script in [env_script_ps1(), env_script_sh()] {
+    for name in [
+        ENV_PS1,
+        ENV_SH,
+        identity::LEGACY_ENV_PS1,
+        identity::LEGACY_ENV_SH,
+    ] {
+        let script = sys::ssh_dir().join(name);
         if script.is_file() {
             let _ = std::fs::remove_file(&script);
             steps.push(format!("已删除 {}", script.display()));
@@ -721,5 +729,20 @@ mod tests {
         assert!(out.contains("echo hi"));
         assert!(!out.contains(BEGIN));
         assert!(!out.contains("export A=1"));
+    }
+
+    #[test]
+    fn upsert_rewrites_legacy_agent_block() {
+        let old = format!(
+            "echo hi\n\n{}\nexport A=1\n{}\n",
+            identity::LEGACY_AGENT_BEGIN,
+            identity::LEGACY_AGENT_END
+        );
+        let out = upsert_marked_block(&old, "export A=2");
+        assert!(out.contains(BEGIN));
+        assert!(out.contains("export A=2"));
+        assert!(!out.contains(identity::LEGACY_AGENT_BEGIN));
+        assert!(!out.contains("export A=1"));
+        assert!(out.contains("echo hi"));
     }
 }
