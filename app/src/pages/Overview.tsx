@@ -550,8 +550,8 @@ export function Overview() {
                     <span
                       style={{
                         overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        textOverflow: calloutContent.text.includes("\n") ? undefined : "ellipsis",
+                        whiteSpace: calloutContent.text.includes("\n") ? "pre-wrap" : "nowrap",
                         flex: 1,
                       }}
                       title={calloutContent.text}

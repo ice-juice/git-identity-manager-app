@@ -117,14 +117,15 @@ fn ssh_exe_name(name: &str) -> String {
 
 fn system_ssh_add() -> Option<PathBuf> {
     sibling_of("system", &ssh_exe_name("ssh-add"))
+        .or_else(|| crate::ssh::toolchain::find_ssh_tool("ssh-add"))
 }
 
 pub(crate) fn git_ssh_bin() -> Option<PathBuf> {
-    sibling_of("git", &ssh_exe_name("ssh"))
+    crate::ssh::toolchain::find_ssh_tool("ssh")
 }
 
 pub(crate) fn git_ssh_add_bin() -> Option<PathBuf> {
-    sibling_of("git", &ssh_exe_name("ssh-add"))
+    crate::ssh::toolchain::find_ssh_tool("ssh-add")
 }
 
 fn git_ssh() -> Option<PathBuf> {
@@ -136,7 +137,7 @@ fn git_ssh_add() -> Option<PathBuf> {
 }
 
 fn git_ssh_agent() -> Option<PathBuf> {
-    sibling_of("git", &ssh_exe_name("ssh-agent"))
+    crate::ssh::toolchain::find_ssh_tool("ssh-agent")
 }
 
 /// 探测套接字上限：mtime 倒序最多试这么多个，避免残留文件把启动拖成 N × 超时。
@@ -248,9 +249,15 @@ pub fn load_key(v: &Vault, env: &AgentEnv, key_id: &str) -> Result<()> {
     if code != 0 {
         let hint = e.trim();
         if is_agent_unreachable(hint) {
-            return Err(AppError::Other(
-                "ssh-add 连不上 agent。Windows OpenSSH 服务可能未启动，已尝试改用 Git 自带 ssh-agent。请再点一次「一键加载」。".into(),
-            ));
+            return Err(AppError::Other(match crate::ssh::toolchain::host_os() {
+                "windows" => {
+                    "ssh-add 连不上 agent。Windows OpenSSH 服务可能未启动，已尝试改用 Git 自带 ssh-agent。请再点一次「一键加载」。"
+                        .into()
+                }
+                _ => {
+                    "ssh-add 连不上 agent。请点「确保运行」拉起本机 ssh-agent，然后重试。".into()
+                }
+            }));
         }
         return Err(AppError::Other(format!("ssh-add 加载失败：{hint}")));
     }
@@ -607,9 +614,9 @@ fn run_ssh_add(env: &AgentEnv, args: &[&str], stdin: Option<&[u8]>) -> Result<(S
 /// 会把套接字落到该文件，并在 `-s` 输出里回显同一路径。不再回退到无 `-a` 的
 /// `ssh-agent -s`——那会在目录里留下 `s.*.agent.*` 随机套接字，复用从未生效。
 pub fn start_git_agent() -> Result<AgentEnv> {
-    let ssh = git_ssh().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh。请先安装 Git for Windows。".into()))?;
-    let exe = git_ssh_agent().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-agent。请先安装 Git for Windows。".into()))?;
-    let add = git_ssh_add().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-add。请先安装 Git for Windows。".into()))?;
+    let ssh = git_ssh().ok_or_else(|| AppError::Other(crate::ssh::toolchain::missing_ssh_tool("ssh")))?;
+    let exe = git_ssh_agent().ok_or_else(|| AppError::Other(crate::ssh::toolchain::missing_ssh_tool("ssh-agent")))?;
+    let add = git_ssh_add().ok_or_else(|| AppError::Other(crate::ssh::toolchain::missing_ssh_tool("ssh-add")))?;
     std::fs::create_dir_all(git_agent_dir()).map_err(|e| AppError::Io(e.to_string()))?;
     let sock_path = stable_git_sock_path();
     let sock_msys = to_msys_sock_path(&sock_path);
@@ -654,9 +661,7 @@ pub fn start_git_agent() -> Result<AgentEnv> {
         env.auth_sock = Some(sock_msys);
     }
     if list(&env).is_err() {
-        return Err(AppError::Other(
-            "已启动 Git ssh-agent，但配套 ssh-add 仍连不上。请确认已安装 Git for Windows。".into(),
-        ));
+        return Err(AppError::Other(crate::ssh::toolchain::agent_add_mismatch()));
     }
     let after = list_ssh_agent_winpids();
     let winpid = after.into_iter().find(|p| !before.contains(p));

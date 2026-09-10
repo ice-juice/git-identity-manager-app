@@ -133,6 +133,110 @@ pub fn home_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
+/// 从访达 / 开始菜单启动时 PATH 往往不含 Homebrew、Git for Windows。
+/// 把常见可执行目录补进当前进程，子进程（git / ssh）才能找到。
+pub fn augment_search_path() {
+    let extras: Vec<PathBuf> = common_bin_dirs().into_iter().filter(|p| p.is_dir()).collect();
+    if extras.is_empty() {
+        return;
+    }
+    let mut parts: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    for dir in extras.into_iter().rev() {
+        if !parts.iter().any(|p| paths_equal_for_path(p, &dir)) {
+            parts.insert(0, dir);
+        }
+    }
+    if let Ok(joined) = std::env::join_paths(parts) {
+        std::env::set_var("PATH", joined);
+    }
+}
+
+fn paths_equal_for_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
+    }
+}
+
+/// 各平台常见的 git / ssh 安装目录（不一定已存在）。
+pub fn common_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    #[cfg(windows)]
+    {
+        for root in [
+            r"C:\Program Files\Git",
+            r"C:\Program Files (x86)\Git",
+        ] {
+            dirs.push(PathBuf::from(root).join("cmd"));
+            dirs.push(PathBuf::from(root).join("bin"));
+            dirs.push(PathBuf::from(root).join(r"usr\bin"));
+            dirs.push(PathBuf::from(root).join(r"mingw64\bin"));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        dirs.push(PathBuf::from("/opt/homebrew/sbin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
+        dirs.push(PathBuf::from("/opt/local/bin"));
+        dirs.push(PathBuf::from("/home/linuxbrew/.linuxbrew/bin"));
+        dirs.push(home_dir().join(".local/bin"));
+    }
+    dirs
+}
+
+/// 在 PATH 与常见安装目录中查找可执行文件。
+pub fn resolve_bin(name: &str) -> Option<PathBuf> {
+    let as_path = std::path::Path::new(name);
+    if as_path.is_absolute() && as_path.is_file() {
+        return Some(as_path.to_path_buf());
+    }
+    let mut names = vec![name.to_string()];
+    #[cfg(windows)]
+    {
+        if !name.to_ascii_lowercase().ends_with(".exe") {
+            names.insert(0, format!("{name}.exe"));
+        }
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for n in &names {
+                let p = dir.join(n);
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    for dir in common_bin_dirs() {
+        for n in &names {
+            let p = dir.join(n);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// 本机 `git` 可执行文件。GUI 启动时 PATH 可能没有 Homebrew / Git for Windows。
+pub fn git_exe() -> Result<String> {
+    resolve_bin("git")
+        .map(|p| p.display().to_string())
+        .ok_or_else(|| AppError::Other(crate::ssh::toolchain::missing_git_cli()))
+}
+
+/// 用解析到的 git 跑命令，避免只写 `"git"` 时从访达启动找不到。
+pub fn run_git(args: &[&str]) -> Result<(String, String, i32)> {
+    run(&git_exe()?, args)
+}
+
 /// `~/.ssh` 目录。
 pub fn ssh_dir() -> PathBuf {
     home_dir().join(".ssh")
@@ -717,5 +821,20 @@ mod tests {
             portable_deployed_path(r"D:\gitIdentifyData\ssh-keys\id_ed25519_a"),
             "%GAM_WORKSPACE%/ssh-keys/id_ed25519_a"
         );
+    }
+
+    #[test]
+    fn common_bin_dirs_cover_current_os() {
+        let dirs = common_bin_dirs();
+        assert!(!dirs.is_empty());
+        #[cfg(windows)]
+        assert!(dirs.iter().any(|p| p.to_string_lossy().contains("Git")));
+        #[cfg(target_os = "macos")]
+        assert!(dirs.iter().any(|p| p.to_string_lossy().contains("homebrew") || p.to_string_lossy().contains("/usr/local")));
+    }
+
+    #[test]
+    fn resolve_bin_rejects_missing_name() {
+        assert!(resolve_bin("gam-definitely-not-installed-bin-xyz").is_none());
     }
 }

@@ -210,8 +210,24 @@ pub fn detect_toolchain() -> Toolchain {
             tc.git = Some(bin);
         }
     }
-    // git 实际调用：优先 core.sshCommand / GIT_SSH，否则默认 Git 自带。
-    tc.git_uses = detect_git_ssh().or_else(|| tc.git.as_ref().map(|b| b.path.clone()));
+    // Unix 没有 Git for Windows 那套路径；把本机 / Homebrew OpenSSH 记为首选。
+    if tc.git.is_none() {
+        if let Some(path) = toolchain::find_ssh_tool("ssh") {
+            let ps = path.display().to_string();
+            let version = sys::run(&ps, &["-V"])
+                .ok()
+                .and_then(|(o, e, _)| toolchain::parse_ssh_version(if e.trim().is_empty() { &o } else { &e }));
+            tc.git = Some(SshBinary {
+                path: ps,
+                version,
+                source: toolchain::preferred_ssh_source().into(),
+            });
+        }
+    }
+    // git 实际调用：优先 core.sshCommand / GIT_SSH，否则首选 ssh。
+    tc.git_uses = detect_git_ssh()
+        .or_else(|| tc.git.as_ref().map(|b| b.path.clone()))
+        .or_else(|| tc.system.as_ref().map(|b| b.path.clone()));
     tc
 }
 
@@ -221,7 +237,7 @@ fn detect_git_ssh() -> Option<String> {
             return Some(v);
         }
     }
-    if let Ok((out, _, code)) = sys::run("git", &["config", "--get", "core.sshCommand"]) {
+    if let Ok((out, _, code)) = sys::run_git(&["config", "--get", "core.sshCommand"]) {
         if code == 0 && !out.trim().is_empty() {
             return Some(out.trim().to_string());
         }
@@ -320,7 +336,7 @@ pub fn test_connection(state: State<AppState>, host_alias: String) -> Result<Aut
                     *state.agent_env.lock().unwrap() = started.clone();
                     started
                 }
-                Err(_) => current,
+                Err(e) => return Err(e),
             }
         }
     };

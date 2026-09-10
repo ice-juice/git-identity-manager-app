@@ -50,7 +50,7 @@ pub fn test_network_proxy(proxy: NetworkProxy) -> Result<ProxyTestResult> {
         );
     } else if proxy.apply_to_ssh && !helper.found {
         ssh_note = Some(
-            "未找到 SSH 代理助手（Git for Windows 的 connect，或 ncat）。HTTPS 仍可用，SSH 克隆/体检不会走代理。"
+            crate::ssh::toolchain::missing_ssh_proxy_helper()
                 .into(),
         );
     } else if proxy.apply_to_ssh && helper.found {

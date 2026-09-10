@@ -119,8 +119,10 @@ export interface EnvCheck {
   ok: boolean;
   current: string | null;
   expected: string | null;
+  hint?: string | null;
 }
 export interface AgentUnifyStatus {
+  os: string;
   gitInstalled: boolean;
   agentRunning: boolean;
   gitSsh: string | null;

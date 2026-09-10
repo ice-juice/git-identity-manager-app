@@ -32,6 +32,9 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 从访达 / 开始菜单启动时 PATH 往往没有 Homebrew、Git for Windows。
+    crate::sys::augment_search_path();
+
     #[cfg(windows)]
     {
         // 默认不要 --disable-gpu：白屏根因是主线程堵在 ssh-agent，强制软件渲染只掉帧。

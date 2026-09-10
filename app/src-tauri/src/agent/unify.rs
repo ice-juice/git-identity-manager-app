@@ -27,11 +27,13 @@ pub struct EnvCheck {
     pub ok: bool,
     pub current: Option<String>,
     pub expected: Option<String>,
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentUnifyStatus {
+    pub os: String,
     pub git_installed: bool,
     pub agent_running: bool,
     pub git_ssh: Option<String>,
@@ -189,7 +191,19 @@ fn powershell_profile_paths() -> Vec<PathBuf> {
 
 fn bash_profile_paths() -> Vec<PathBuf> {
     let home = sys::home_dir();
-    vec![home.join(".bashrc"), home.join(".bash_profile")]
+    #[cfg(target_os = "macos")]
+    {
+        vec![
+            home.join(".zshrc"),
+            home.join(".zprofile"),
+            home.join(".bashrc"),
+            home.join(".bash_profile"),
+        ]
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        vec![home.join(".bashrc"), home.join(".bash_profile")]
+    }
 }
 
 fn git_bin_dir(ssh: &str) -> Option<PathBuf> {
@@ -197,7 +211,7 @@ fn git_bin_dir(ssh: &str) -> Option<PathBuf> {
 }
 
 fn current_core_ssh_command() -> Option<String> {
-    let (out, _, code) = sys::run("git", &["config", "--global", "--get", "core.sshCommand"]).ok()?;
+    let (out, _, code) = sys::run_git(&["config", "--global", "--get", "core.sshCommand"]).ok()?;
     if code == 0 && !out.trim().is_empty() {
         Some(out.trim().to_string())
     } else {
@@ -207,7 +221,7 @@ fn current_core_ssh_command() -> Option<String> {
 
 fn set_core_ssh_command(ssh: &str) -> Result<()> {
     let value = ssh_command_value(ssh);
-    let (out, err, code) = sys::run("git", &["config", "--global", "core.sshCommand", &value])?;
+    let (out, err, code) = sys::run_git(&["config", "--global", "core.sshCommand", &value])?;
     if code != 0 {
         let detail = if !err.trim().is_empty() { err } else { out };
         return Err(AppError::Other(format!(
@@ -273,7 +287,7 @@ fn write_env_scripts(env: &AgentEnv) -> Result<(PathBuf, PathBuf)> {
         .clone()
         .ok_or_else(|| AppError::Other("Git ssh-agent 套接字未知".into()))?;
     let git_bin = git_bin_dir(&ssh)
-        .ok_or_else(|| AppError::Other("无法解析 Git usr\\bin".into()))?;
+        .ok_or_else(|| AppError::Other("无法解析 ssh 所在目录".into()))?;
     let git_bin_s = git_bin.display().to_string();
     let git_bin_msys = crate::agent::to_msys_sock_path(&git_bin);
     let pid_line_ps = env
@@ -328,6 +342,8 @@ fn hook_bash_profiles(script: &Path) -> Result<bool> {
     let any_exist = paths.iter().any(|p| p.is_file());
     let targets: Vec<PathBuf> = if any_exist {
         paths.into_iter().filter(|p| p.is_file()).collect()
+    } else if crate::ssh::toolchain::host_os() == "macos" {
+        vec![sys::home_dir().join(".zshrc")]
     } else {
         vec![sys::home_dir().join(".bashrc")]
     };
@@ -360,6 +376,7 @@ fn env_check(
     ok: bool,
     current: Option<String>,
     expected: Option<String>,
+    hint: Option<String>,
 ) -> EnvCheck {
     EnvCheck {
         key: key.into(),
@@ -367,6 +384,7 @@ fn env_check(
         ok,
         current,
         expected,
+        hint: if ok { None } else { hint },
     }
 }
 
@@ -398,50 +416,71 @@ pub fn inspect(env: &AgentEnv) -> AgentUnifyStatus {
     let (powershell_profile_ok, bash_profile_ok) = profiles_ok();
     let git_installed = git_ssh.is_some();
     let agent_running = env.auth_sock.is_some() && crate::agent::is_ready(env);
-    let aligned = git_installed
-        && agent_running
-        && git_config_ok
-        && user_git_ssh_ok
-        && user_sock_ok
-        && (powershell_profile_ok || bash_profile_ok);
+    let os = crate::ssh::toolchain::host_os();
+    let aligned = if os == "windows" {
+        git_installed
+            && agent_running
+            && git_config_ok
+            && user_git_ssh_ok
+            && user_sock_ok
+            && (powershell_profile_ok || bash_profile_ok)
+    } else {
+        git_installed && agent_running && bash_profile_ok
+    };
 
-    let checks = vec![
+    let ssh_label = crate::ssh::toolchain::ssh_tool_label();
+    let shell_label = if os == "macos" {
+        "终端启动脚本（zsh / bash）"
+    } else if os == "windows" {
+        "Git Bash 启动脚本"
+    } else {
+        "终端启动脚本（bash）"
+    };
+
+    let mut checks = vec![
         env_check(
             "gitSsh",
-            "Git 自带 ssh",
+            ssh_label,
             git_installed,
             git_ssh.clone(),
             None,
+            Some(crate::ssh::toolchain::missing_ssh_tool("ssh")),
         ),
         env_check(
             "agent",
-            "Git ssh-agent",
+            if os == "windows" { "Git ssh-agent" } else { "本机 ssh-agent" },
             agent_running,
             env.auth_sock.clone(),
             want_sock.clone(),
+            Some("请点「确保运行」。若刚装完 OpenSSH / git，请完全退出本程序再打开。".into()),
         ),
-        env_check(
+    ];
+    if os == "windows" {
+        checks.push(env_check(
             "gitConfig",
             "git core.sshCommand",
             git_config_ok,
             git_config_value.clone(),
             want_ssh.as_ref().map(|s| ssh_command_value(s)),
-        ),
-        env_check(
+            Some("点「应用到本机环境」写入 git config。若提示找不到 git，请先安装 Git for Windows。".into()),
+        ));
+        checks.push(env_check(
             "userGitSsh",
             "用户环境 GIT_SSH",
             user_git_ssh_ok,
             user_git_ssh.clone(),
             want_ssh.clone(),
-        ),
-        env_check(
+            Some("点「应用到本机环境」写入当前用户环境变量 GIT_SSH。".into()),
+        ));
+        checks.push(env_check(
             "userSock",
             "用户环境 SSH_AUTH_SOCK",
             user_sock_ok,
             user_auth_sock.clone(),
             want_sock.clone(),
-        ),
-        env_check(
+            Some("点「应用到本机环境」写入当前用户环境变量 SSH_AUTH_SOCK。".into()),
+        ));
+        checks.push(env_check(
             "powershell",
             "PowerShell 启动脚本",
             powershell_profile_ok,
@@ -451,21 +490,28 @@ pub fn inspect(env: &AgentEnv) -> AgentUnifyStatus {
                 "未挂钩".into()
             }),
             Some("新开终端自动使用 Git ssh / agent".into()),
-        ),
-        env_check(
-            "bash",
-            "Git Bash 启动脚本",
-            bash_profile_ok,
-            Some(if bash_profile_ok {
-                "已挂钩 Git ssh-agent".into()
-            } else {
-                "未挂钩".into()
-            }),
-            Some("新开终端自动使用 Git ssh / agent".into()),
-        ),
-    ];
+            Some("点「应用到本机环境」挂钩 PowerShell $PROFILE。已打开的终端需新开窗口。".into()),
+        ));
+    }
+    checks.push(env_check(
+        "bash",
+        shell_label,
+        bash_profile_ok,
+        Some(if bash_profile_ok {
+            "已挂钩 ssh-agent".into()
+        } else {
+            "未挂钩".into()
+        }),
+        Some("新开终端自动使用同一套 ssh / agent".into()),
+        Some(if os == "macos" {
+            "点「应用到本机环境」挂钩 ~/.zshrc。已打开的终端需新开窗口。".into()
+        } else {
+            "点「应用到本机环境」挂钩 ~/.bashrc。已打开的终端需新开窗口。".into()
+        }),
+    ));
 
     AgentUnifyStatus {
+        os: os.into(),
         git_installed,
         agent_running,
         git_ssh,
@@ -492,7 +538,7 @@ pub fn apply(env: &AgentEnv) -> Result<AgentUnifyReport> {
         .ssh
         .clone()
         .or_else(|| crate::agent::git_ssh_bin().map(|p| p.display().to_string()))
-        .ok_or_else(|| AppError::Other("未找到 Git 自带 ssh。请先安装 Git for Windows。".into()))?;
+        .ok_or_else(|| AppError::Other(crate::ssh::toolchain::missing_ssh_tool("ssh")))?;
     let ssh_add = env
         .ssh_add
         .clone()
@@ -547,8 +593,18 @@ pub fn apply(env: &AgentEnv) -> Result<AgentUnifyReport> {
     }
     let bash_profile = hook_bash_profiles(&sh_script)?;
     if bash_profile {
-        steps.push("已挂钩 Git Bash ~/.bashrc".into());
+        steps.push(if crate::ssh::toolchain::host_os() == "macos" {
+            "已挂钩 ~/.zshrc".into()
+        } else {
+            "已挂钩 ~/.bashrc".into()
+        });
     }
+
+    let hint = match crate::ssh::toolchain::host_os() {
+        "windows" => "新开的 PowerShell / Git Bash 会自动带上这套 Git ssh-agent。已经打开的 Cursor 窗口请新开终端；只改了用户环境变量的程序需要重启后才会读到。",
+        "macos" => "新开的终端（zsh）会自动带上这套 ssh-agent。已经打开的终端或 Cursor 窗口请新开一页；从访达启动的本程序已能直接使用本机 OpenSSH。",
+        _ => "新开的终端会自动带上这套 ssh-agent。已经打开的终端请新开窗口。",
+    };
 
     Ok(AgentUnifyReport {
         git_ssh: ssh,
@@ -560,7 +616,7 @@ pub fn apply(env: &AgentEnv) -> Result<AgentUnifyReport> {
         powershell_profile,
         bash_profile,
         steps,
-        hint: "新开的 PowerShell / Git Bash 会自动带上这套 Git ssh-agent。已经打开的 Cursor 窗口请新开终端；只改了用户环境变量的程序需要重启后才会读到。".into(),
+        hint: hint.into(),
     })
 }
 
@@ -581,7 +637,7 @@ fn delete_user_env(_name: &str) -> Result<()> {
 }
 
 fn unset_core_ssh_command() -> Result<()> {
-    let (_o, _e, code) = sys::run("git", &["config", "--global", "--unset", "core.sshCommand"])?;
+    let (_o, _e, code) = sys::run_git(&["config", "--global", "--unset", "core.sshCommand"])?;
     if code != 0 && code != 5 {
         // 5 = 该项不存在
         log::warn!("unset core.sshCommand 返回 {code}");
