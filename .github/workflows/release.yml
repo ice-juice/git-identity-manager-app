@@ -215,10 +215,13 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ice-juice/git-keymaster-app
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
+          owner: ice-juice
+          repo: git-keymaster-app
           args: ${{ matrix.args }}
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: Git Keymaster ${{ steps.meta.outputs.tag }}
@@ -228,6 +231,7 @@ jobs:
           includeUpdaterJson: ${{ steps.meta.outputs.publish == 'true' }}
           updaterJsonPreferNsis: true
           updaterJsonKeepUniversal: true
+          retryAttempts: 3
 
       - name: Stamp locale on installer names
         shell: bash
