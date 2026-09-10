@@ -546,7 +546,7 @@ type SettingsTab = "general" | "security" | "workspace" | "about" | "danger";
 
 export function Settings() {
   const navigate = useNavigate();
-  const { status, refresh, theme, setTheme } = useApp();
+  const { status, refresh, theme, setTheme, unlockAnimEnabled, setUnlockAnimEnabled } = useApp();
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
 
   const [oldPw, setOldPw] = useState("");
@@ -704,6 +704,27 @@ export function Settings() {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+              </Card>
+
+              <Card title="解锁开门动画">
+                <div className="field">
+                  <div className="between">
+                    <div>
+                      <FieldLabel
+                        name="解锁过场动画"
+                        tip="每次手动输入访问密码/恢复密钥解锁成功后，播放吉祥猫随机抽取一把钥匙开门的过场动画。免验证静默解锁不会触发。"
+                      />
+                      <div className="hint">
+                        关闭后解锁将直接进入主界面。系统开启「减少动态效果」时会自动跳过；播放中可点击任意处或按 Esc 跳过。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={"switch" + (unlockAnimEnabled ? "" : " off")}
+                      onClick={() => setUnlockAnimEnabled(!unlockAnimEnabled)}
+                    />
                   </div>
                 </div>
               </Card>

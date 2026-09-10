@@ -19,43 +19,44 @@ export const AppLogo: React.FC<AppLogoProps> = ({ size = 26, className = "", sty
       <defs>
         {/* Background Gradient */}
         <linearGradient id="octoBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#090d16" />
-          <stop offset="45%" stopColor="#16183c" />
-          <stop offset="100%" stopColor="#080a12" />
+          <stop offset="0%" stopColor="#070a14" />
+          <stop offset="45%" stopColor="#0f1328" />
+          <stop offset="100%" stopColor="#05070e" />
         </linearGradient>
 
         {/* Border Glow */}
         <linearGradient id="octoBorderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#818cf8" stopOpacity="0.85" />
-          <stop offset="50%" stopColor="#6366f1" stopOpacity="0.3" />
-          <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.75" />
+          <stop offset="0%" stopColor="#a5b4fc" stopOpacity="0.9" />
+          <stop offset="50%" stopColor="#6366f1" stopOpacity="0.4" />
+          <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.8" />
         </linearGradient>
 
         {/* Center Radial Glow */}
         <radialGradient id="octoCenterGlow" cx="50%" cy="38%" r="58%">
-          <stop offset="0%" stopColor="#6366f1" stopOpacity="0.4" />
-          <stop offset="50%" stopColor="#4338ca" stopOpacity="0.15" />
-          <stop offset="100%" stopColor="#16183c" stopOpacity="0" />
+          <stop offset="0%" stopColor="#818cf8" stopOpacity="0.55" />
+          <stop offset="50%" stopColor="#4f46e5" stopOpacity="0.25" />
+          <stop offset="100%" stopColor="#0f1328" stopOpacity="0" />
         </radialGradient>
 
-        {/* Octocat Body Gradient */}
+        {/* Octocat Body Gradient (Illuminated Tech Violet-Indigo for high contrast) */}
         <linearGradient id="octoCatBodyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stopColor="#2d3748" />
-          <stop offset="45%" stopColor="#1a202c" />
-          <stop offset="100%" stopColor="#0f172a" />
+          <stop offset="0%" stopColor="#818cf8" />
+          <stop offset="35%" stopColor="#6366f1" />
+          <stop offset="70%" stopColor="#4f46e5" />
+          <stop offset="100%" stopColor="#312e81" />
         </linearGradient>
 
         {/* Cat Rim Lighting */}
         <linearGradient id="octoCatRimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#e0e7ff" />
-          <stop offset="50%" stopColor="#818cf8" />
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="50%" stopColor="#a5b4fc" />
           <stop offset="100%" stopColor="#38bdf8" />
         </linearGradient>
 
         {/* Inner Ear Pink Glow */}
         <linearGradient id="octoCatEarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#f472b6" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#a855f7" stopOpacity="0.3" />
+          <stop offset="0%" stopColor="#f472b6" stopOpacity="0.95" />
+          <stop offset="100%" stopColor="#c084fc" stopOpacity="0.6" />
         </linearGradient>
 
         {/* Golden Key Gradient */}
@@ -150,9 +151,9 @@ export const AppLogo: React.FC<AppLogoProps> = ({ size = 26, className = "", sty
              C330 225 330 195 316 178
              C300 165 280 174 256 174
              C232 174 212 165 196 178 Z"
-          fill="#0c1322"
-          stroke="#4f46e5"
-          strokeWidth="1.5"
+          fill="#1e1b4b"
+          stroke="#818cf8"
+          strokeWidth="1.8"
           opacity="0.95"
         />
 

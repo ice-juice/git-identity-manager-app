@@ -16,11 +16,19 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         None => tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?,
     };
 
+    let app_title = app
+        .config()
+        .app
+        .windows
+        .first()
+        .map(|w| w.title.clone())
+        .unwrap_or_else(|| "御钥师".to_string());
+
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Git 多账号管理器")
+        .tooltip(app_title)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => restore_from_tray(app),
             "quit" => {

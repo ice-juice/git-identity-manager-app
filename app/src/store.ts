@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, type VaultStatus } from "./lib/ipc";
 import { type ThemeMode, getSavedTheme, applyTheme } from "./lib/theme";
+import { getUnlockAnimEnabled, setUnlockAnimEnabledStored } from "./lib/prefs";
 
 interface AppStore {
   status: VaultStatus | null;
@@ -8,9 +9,14 @@ interface AppStore {
   theme: ThemeMode;
   writesLocked: boolean;
   startupNote: string;
+  unlockAnimEnabled: boolean;
+  playUnlockAnim: boolean;
   setTheme: (t: ThemeMode) => void;
   toggleTheme: () => void;
   setWritesLock: (locked: boolean, note?: string | null) => void;
+  setUnlockAnimEnabled: (on: boolean) => void;
+  startUnlockAnim: () => void;
+  endUnlockAnim: () => void;
   refresh: () => Promise<void>;
   lock: () => Promise<void>;
 }
@@ -24,9 +30,17 @@ export const useApp = create<AppStore>((set, get) => ({
   theme: initialTheme,
   writesLocked: false,
   startupNote: "",
+  unlockAnimEnabled: getUnlockAnimEnabled(),
+  playUnlockAnim: false,
   setWritesLock: (locked, note) => {
     set({ writesLocked: locked, startupNote: note ?? "" });
   },
+  setUnlockAnimEnabled: (on: boolean) => {
+    setUnlockAnimEnabledStored(on);
+    set({ unlockAnimEnabled: on });
+  },
+  startUnlockAnim: () => set({ playUnlockAnim: true }),
+  endUnlockAnim: () => set({ playUnlockAnim: false }),
   setTheme: (t: ThemeMode) => {
     applyTheme(t);
     set({ theme: t });
@@ -53,6 +67,6 @@ export const useApp = create<AppStore>((set, get) => ({
   lock: async () => {
     await api.vaultLock();
     const status = await api.vaultStatus();
-    set({ status, writesLocked: false, startupNote: "" });
+    set({ status, writesLocked: false, startupNote: "", playUnlockAnim: false });
   },
 }));

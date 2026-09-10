@@ -3,9 +3,10 @@ import { Sun, Moon, Palette } from "lucide-react";
 import { api, errMessage } from "../lib/ipc";
 import { useApp } from "../store";
 import { AppLogo } from "../ui/AppLogo";
+import { prefersReducedMotion } from "../lib/prefs";
 
 export function Unlock() {
-  const { refresh, theme, toggleTheme } = useApp();
+  const { refresh, theme, toggleTheme, unlockAnimEnabled, startUnlockAnim } = useApp();
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -20,6 +21,10 @@ export function Unlock() {
         await api.vaultUnlockRecovery(recovery);
       } else {
         await api.vaultUnlock(pw);
+      }
+      // 手动解锁成功后播放开门动画（静默/免验证解锁不会走到这里）
+      if (unlockAnimEnabled && !prefersReducedMotion()) {
+        startUnlockAnim();
       }
       await refresh();
     } catch (e) {

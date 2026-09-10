@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "git-account-manager",
+  "productName": "御钥师",
   "version": "1.1.1",
   "identifier": "com.jeck.gitaccountmanager",
   "build": {
@@ -12,13 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "Git 多账号管理器",
+        "title": "御钥师",
         "width": 980,
         "height": 620,
         "minWidth": 840,
         "minHeight": 520,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": false
       }
     ],
     "security": {

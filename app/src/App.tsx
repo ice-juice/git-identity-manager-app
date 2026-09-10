@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense, type ReactNode } from "react";
 import { HashRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/ipc";
 import { useApp } from "./store";
 import { Layout } from "./ui/Layout";
+import { TitleBar } from "./ui/TitleBar";
 import { InitWizard } from "./pages/Init";
 import { Unlock } from "./pages/Unlock";
 import { Overview } from "./pages/Overview";
@@ -17,6 +18,9 @@ import { SyncPage } from "./pages/Sync";
 import { Settings } from "./pages/Settings";
 import { CloseConfirmHost } from "./ui/CloseConfirm";
 
+// 过场动画懒加载：未开启/未触发时不会进入主包
+const UnlockAnimation = lazy(() => import("./ui/UnlockAnimation"));
+
 function AppShell() {
   return (
     <Layout>
@@ -26,7 +30,13 @@ function AppShell() {
 }
 
 export default function App() {
-  const { status, loading, refresh, setWritesLock } = useApp();
+  const { status, loading, refresh, setWritesLock, playUnlockAnim, endUnlockAnim } = useApp();
+
+  const unlockOverlay = playUnlockAnim ? (
+    <Suspense fallback={null}>
+      <UnlockAnimation onDone={endUnlockAnim} />
+    </Suspense>
+  ) : null;
 
   useEffect(() => {
     (async () => {
@@ -84,38 +94,19 @@ export default function App() {
     };
   }, [refresh]);
 
+  let screen: ReactNode;
   if (loading) {
-    return (
-      <>
-        <CloseConfirmHost />
-        <div className="center-stage">
-          <div className="muted">加载中…</div>
-        </div>
-      </>
+    screen = (
+      <div className="center-stage">
+        <div className="muted">加载中…</div>
+      </div>
     );
-  }
-
-  if (!status?.initialized) {
-    return (
-      <>
-        <CloseConfirmHost />
-        <InitWizard />
-      </>
-    );
-  }
-
-  if (!status.unlocked) {
-    return (
-      <>
-        <CloseConfirmHost />
-        <Unlock />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <CloseConfirmHost />
+  } else if (!status?.initialized) {
+    screen = <InitWizard />;
+  } else if (!status.unlocked) {
+    screen = <Unlock />;
+  } else {
+    screen = (
       <HashRouter>
         <Routes>
           <Route path="/identities/new" element={<NewIdentity />} />
@@ -132,6 +123,17 @@ export default function App() {
           </Route>
         </Routes>
       </HashRouter>
+    );
+  }
+
+  return (
+    <>
+      <CloseConfirmHost />
+      <div className="app-shell">
+        <TitleBar />
+        <div className="app-view">{screen}</div>
+      </div>
+      {unlockOverlay}
     </>
   );
 }

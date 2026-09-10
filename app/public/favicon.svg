@@ -2,43 +2,44 @@
   <defs>
     <!-- Background Gradient -->
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#090d16"/>
-      <stop offset="45%" stop-color="#16183c"/>
-      <stop offset="100%" stop-color="#080a12"/>
+      <stop offset="0%" stop-color="#070a14"/>
+      <stop offset="45%" stop-color="#0f1328"/>
+      <stop offset="100%" stop-color="#05070e"/>
     </linearGradient>
 
     <!-- Border Glow -->
     <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#818cf8" stop-opacity="0.85"/>
-      <stop offset="50%" stop-color="#6366f1" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.75"/>
+      <stop offset="0%" stop-color="#a5b4fc" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#6366f1" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.8"/>
     </linearGradient>
 
     <!-- Center Radial Glow -->
     <radialGradient id="centerGlow" cx="50%" cy="38%" r="58%">
-      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.4"/>
-      <stop offset="50%" stop-color="#4338ca" stop-opacity="0.15"/>
-      <stop offset="100%" stop-color="#16183c" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#818cf8" stop-opacity="0.55"/>
+      <stop offset="50%" stop-color="#4f46e5" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#0f1328" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Octocat Body Gradient (Dark Navy/Slate with high-tech depth) -->
+    <!-- Octocat Body Gradient (Illuminated Tech Violet-Indigo for high contrast) -->
     <linearGradient id="catBodyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#2d3748"/>
-      <stop offset="45%" stop-color="#1a202c"/>
-      <stop offset="100%" stop-color="#0f172a"/>
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="35%" stop-color="#6366f1"/>
+      <stop offset="70%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#312e81"/>
     </linearGradient>
 
     <!-- Cat Rim Lighting -->
     <linearGradient id="catRimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#e0e7ff"/>
-      <stop offset="50%" stop-color="#818cf8"/>
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="50%" stop-color="#a5b4fc"/>
       <stop offset="100%" stop-color="#38bdf8"/>
     </linearGradient>
 
     <!-- Inner Ear Pink Glow -->
     <linearGradient id="catEarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#a855f7" stop-opacity="0.3"/>
+      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.6"/>
     </linearGradient>
 
     <!-- Golden Key Gradient (Brilliant Light Gold to Rich Amber) -->
@@ -129,9 +130,9 @@
              C330 225 330 195 316 178
              C300 165 280 174 256 174
              C232 174 212 165 196 178 Z"
-          fill="#0c1322"
-          stroke="#4f46e5"
-          stroke-width="1.5"
+          fill="#1e1b4b"
+          stroke="#818cf8"
+          stroke-width="1.8"
           opacity="0.95"/>
 
     <!-- Expressive Eyes -->
