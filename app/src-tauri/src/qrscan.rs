@@ -77,11 +77,11 @@ pub fn scan_screen() -> Result<Vec<ScreenHit>> {
     let mut hits = Vec::new();
     for (idx, mon) in monitors.iter().enumerate() {
         let name = {
-            let n = mon.name();
+            let n = mon.name().unwrap_or_default();
             if n.is_empty() {
                 format!("显示器 {}", idx + 1)
             } else {
-                n.to_string()
+                n
             }
         };
         let captured = mon

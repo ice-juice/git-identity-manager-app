@@ -263,7 +263,7 @@ function UpdateNotes({ notes }: { notes: string }) {
   return (
     <div className="update-notes">
       {blocks.map((line, i) => {
-        const heading = line.match(/^###\s+(.+)/);
+        const heading = line.match(/^#{2,3}\s+(.+)/);
         if (heading) {
           return (
             <div key={i} className="update-notes-h">

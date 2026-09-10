@@ -100,16 +100,7 @@ jobs:
             echo "::error::缺少 CHANGELOG.md，无法写入升级说明"
             exit 1
           fi
-          notes="$(awk -v ver="$version" '
-            $0 ~ "^## \\[" ver "\\]" {flag=1; next}
-            flag && /^## \[/ {exit}
-            flag {print}
-          ' CHANGELOG.md | sed 's/\r$//')"
-          stripped="$(printf '%s' "$notes" | tr -d '[:space:]')"
-          if [[ -z "$stripped" ]]; then
-            echo "::error::CHANGELOG.md 缺少版本 ${version} 的说明（需要 ## [${version}] 章节）"
-            exit 1
-          fi
+          notes="$(bash scripts/build-release-notes.sh "$version")"
           delim="NOTES_EOF_${RANDOM}_${RANDOM}"
           {
             echo "body<<${delim}"
@@ -120,7 +111,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
@@ -140,7 +131,15 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            libxdo-dev
+            libxdo-dev \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev
 
       - name: Require updater signing secrets
         shell: bash
