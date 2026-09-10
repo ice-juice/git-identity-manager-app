@@ -1,6 +1,6 @@
 # 打包与发布只认 release 分支上的提交：
 # - 只推 release 分支：不打包（避免和打标签各跑一轮）
-# - 推送 v* 标签：多平台出包，建草稿 Release，合并生成 latest.json
+# - 推送 v* 标签：先跑 2 路 Unix cargo test（preflight），通过后再 6 路出包
 # - 手动 Run workflow：可选出包；勾选 create_release 时建草稿 Release
 name: Release packages
 
@@ -20,7 +20,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  preflight:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/heads/release ]]; then
+            echo "Building from release branch"
+            exit 0
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            git fetch origin release --depth=100
+            if git merge-base --is-ancestor HEAD origin/release; then
+              echo "Tag ${GITHUB_REF_NAME} is on release"
+              exit 0
+            fi
+            echo "::error::v* 标签必须打在 release 分支的提交上"
+            exit 1
+          fi
+          echo "::error::打包与发布只允许在 release 分支，或基于该分支的 v* 标签上执行"
+          exit 1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: bash scripts/ci-linux-deps.sh
+
+      - name: Run Rust tests
+        working-directory: app/src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --color always 2>&1 | tee rust-test.log
+
+      - name: Upload rust test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-preflight-${{ matrix.os }}
+          path: app/src-tauri/rust-test.log
+
   build:
+    needs: preflight
     permissions:
       contents: write
     strategy:
@@ -29,10 +88,10 @@ jobs:
         include:
           - platform: windows-latest
             lang: zh
-            args: ""
+            args: "--bundles nsis"
           - platform: windows-latest
             lang: en
-            args: ""
+            args: "--bundles nsis"
           - platform: macos-latest
             lang: zh
             args: "--target universal-apple-darwin"
@@ -120,26 +179,14 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            libxdo-dev \
-            pkg-config \
-            libclang-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libdbus-1-dev \
-            libpipewire-0.3-dev \
-            libwayland-dev \
-            libegl-dev
+        run: bash scripts/ci-linux-deps.sh
 
       - name: Require updater signing secrets
         shell: bash
@@ -164,10 +211,6 @@ jobs:
 
       - name: Prepare language config (${{ matrix.lang }})
         run: node scripts/prepare-lang.mjs ${{ matrix.lang }}
-
-      - name: Run Rust tests
-        working-directory: app/src-tauri
-        run: cargo test
 
       - uses: tauri-apps/tauri-action@v0
         env:

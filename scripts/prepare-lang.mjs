@@ -11,6 +11,9 @@ const lang = (process.argv[2] || "zh").toLowerCase();
 const tauriConfPath = path.join(rootDir, "app", "src-tauri", "tauri.conf.json");
 const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf-8"));
 
+// 可执行文件必须用 ASCII 名。中文 productName 会让 Windows NSIS 找不到 exe，WiX MSI 也会因 codepage 失败。
+tauriConf.mainBinaryName = "git-account-manager";
+
 if (lang === "en") {
   tauriConf.productName = "Git Keymaster";
   if (tauriConf.app && tauriConf.app.windows && tauriConf.app.windows[0]) {
@@ -21,6 +24,9 @@ if (lang === "en") {
   if (tauriConf.app && tauriConf.app.windows && tauriConf.app.windows[0]) {
     tauriConf.app.windows[0].title = "御钥师";
   }
+  // 中文产品名不要走 WiX MSI（light.exe / codepage 1252）。
+  tauriConf.bundle = tauriConf.bundle || {};
+  tauriConf.bundle.targets = ["nsis", "app", "dmg", "appimage", "deb", "rpm"];
 }
 
 fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2), "utf-8");

@@ -1,6 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "御钥师",
+  "mainBinaryName": "git-account-manager",
   "version": "1.2.0",
   "identifier": "com.jeck.gitaccountmanager",
   "build": {
@@ -28,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "app", "dmg", "appimage", "deb", "rpm"],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",

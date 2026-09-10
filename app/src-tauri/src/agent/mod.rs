@@ -350,7 +350,7 @@ pub fn from_msys_sock_path(sock: &str) -> PathBuf {
         let rest = s[3..].replace('/', std::path::MAIN_SEPARATOR_STR);
         return PathBuf::from(format!("{drive}:{sep}{rest}", sep = std::path::MAIN_SEPARATOR));
     }
-    PathBuf::from(sock.trim().replace('/', std::path::MAIN_SEPARATOR_STR))
+    PathBuf::from(s.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
 fn normalized_sock(sock: &str) -> String {
@@ -799,12 +799,12 @@ mod tests {
             ))
         );
         assert_eq!(to_msys_sock_path(&win), msys);
+        // 用斜杠归一化比较，避免 Unix 把未转换的 `C:\...` 当成单路径组件。
         assert_eq!(
-            from_msys_sock_path(r"C:\Users\Jeck\.ssh\agent\s.abc"),
-            PathBuf::from(format!(
-                "C:{sep}Users{sep}Jeck{sep}.ssh{sep}agent{sep}s.abc",
-                sep = std::path::MAIN_SEPARATOR
-            ))
+            from_msys_sock_path(r"C:\Users\Jeck\.ssh\agent\s.abc")
+                .to_string_lossy()
+                .replace('\\', "/"),
+            "C:/Users/Jeck/.ssh/agent/s.abc"
         );
     }
 

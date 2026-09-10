@@ -2,7 +2,7 @@
 - **语言**：中文界面选「御钥师」开头的文件，英文界面选 `Git Keymaster` 开头的文件
 - **签名文件**：同名 `.sig` 一般不用下载
 - **Windows（推荐）**：`*_x64-setup.exe`（安装向导，之后可在应用内更新）
-- **Windows MSI**：`*_x64_en-US.msi`（适合用部署工具安装）
+- **Windows**：中文版产品名含汉字，只出 NSIS 安装包，不出 MSI
 - **macOS（推荐）**：`*_universal.dmg`（Intel 与 Apple Silicon 通用）
 - **macOS 更新包**：`*_universal.app.tar.gz` 仅供应用内自动更新，不必手动下载
 - **Linux 自动更新（推荐）**：`*_amd64.AppImage`，下载后赋予执行权限即可运行
