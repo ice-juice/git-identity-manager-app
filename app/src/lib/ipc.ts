@@ -362,6 +362,27 @@ export interface UpdateProgress {
   total: number | null;
 }
 
+export interface NetworkProxy {
+  enabled: boolean;
+  scheme: "http" | "https" | "socks5" | string;
+  host: string;
+  port: number;
+  username?: string | null;
+  password?: string | null;
+  applyToGitHttps: boolean;
+  applyToSsh: boolean;
+  applyToCloudSync: boolean;
+}
+
+export interface ProxyTestResult {
+  httpsOk: boolean;
+  httpsMs: number | null;
+  httpsError: string | null;
+  sshHelperFound: boolean;
+  sshHelperName: string | null;
+  sshNote: string | null;
+}
+
 // ---- 命令 ----
 export const api = {
   // vault
@@ -503,6 +524,10 @@ export const api = {
   downloadAndInstallUpdate: () => invoke<void>("download_and_install_update"),
   skipUpdateVersion: (version: string) => invoke<void>("skip_update_version", { version }),
   getLastUpdateCheck: () => invoke<string | null>("get_last_update_check"),
+
+  getNetworkProxy: () => invoke<NetworkProxy | null>("get_network_proxy"),
+  saveNetworkProxy: (proxy: NetworkProxy | null) => invoke<void>("save_network_proxy", { proxy }),
+  testNetworkProxy: (proxy: NetworkProxy) => invoke<ProxyTestResult>("test_network_proxy", { proxy }),
 };
 
 export function errMessage(e: unknown): string {

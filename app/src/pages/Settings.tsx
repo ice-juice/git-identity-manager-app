@@ -8,11 +8,12 @@ import {
   Rocket,
   AlertTriangle,
   ExternalLink,
+  Globe,
   RefreshCw,
   Cloud,
   FileCog,
 } from "lucide-react";
-import { api, errMessage, type UpdateCheckResult, type UpdateSource } from "../lib/ipc";
+import { api, errMessage, type NetworkProxy, type ProxyTestResult, type UpdateCheckResult, type UpdateSource } from "../lib/ipc";
 import { useApp } from "../store";
 import { THEME_OPTIONS } from "../lib/theme";
 import { PageHead, Card, FieldLabel, Badge } from "../ui/common";
@@ -240,6 +241,287 @@ function formatWhen(iso: string | null | undefined): string {
   return d.toLocaleString();
 }
 
+function UpdateNotes({ notes }: { notes: string }) {
+  const blocks = notes
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line, i, arr) => line.trim() !== "" || (i > 0 && arr[i - 1].trim() !== ""));
+
+  return (
+    <div className="update-notes">
+      {blocks.map((line, i) => {
+        const heading = line.match(/^###\s+(.+)/);
+        if (heading) {
+          return (
+            <div key={i} className="update-notes-h">
+              {heading[1]}
+            </div>
+          );
+        }
+        const item = line.match(/^[-*]\s+(.+)/);
+        if (item) {
+          return (
+            <div key={i} className="update-notes-li">
+              {renderInline(item[1])}
+            </div>
+          );
+        }
+        return (
+          <div key={i} className="update-notes-p">
+            {renderInline(line)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderInline(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    const bold = part.match(/^\*\*([^*]+)\*\*$/);
+    if (bold) return <strong key={i}>{bold[1]}</strong>;
+    return <span key={i}>{part}</span>;
+  });
+}
+
+const EMPTY_PROXY: NetworkProxy = {
+  enabled: false,
+  scheme: "http",
+  host: "127.0.0.1",
+  port: 7890,
+  username: "",
+  password: "",
+  applyToGitHttps: true,
+  applyToSsh: true,
+  applyToCloudSync: true,
+};
+
+function NetworkProxyCard() {
+  const [form, setForm] = useState<NetworkProxy>(EMPTY_PROXY);
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [test, setTest] = useState<ProxyTestResult | null>(null);
+
+  useEffect(() => {
+    api
+      .getNetworkProxy()
+      .then((p) => {
+        if (p) {
+          setForm({
+            ...EMPTY_PROXY,
+            ...p,
+            username: p.username ?? "",
+            password: p.password ?? "",
+          });
+        }
+      })
+      .catch((e) => setErr(errMessage(e)));
+  }, []);
+
+  function patch(partial: Partial<NetworkProxy>) {
+    setForm((prev) => ({ ...prev, ...partial }));
+  }
+
+  function payload(): NetworkProxy {
+    const port = Number(form.port);
+    return {
+      ...form,
+      scheme: form.scheme || "http",
+      host: form.host.trim(),
+      port: Number.isFinite(port) ? port : 0,
+      username: form.username?.trim() || null,
+      password: form.password || null,
+    };
+  }
+
+  async function save() {
+    setErr("");
+    setMsg("");
+    setBusy(true);
+    try {
+      await api.saveNetworkProxy(payload());
+      setMsg(payload().enabled ? "代理已保存并启用" : "代理已保存（当前关闭）");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearProxy() {
+    setErr("");
+    setMsg("");
+    setBusy(true);
+    try {
+      await api.saveNetworkProxy(null);
+      setForm(EMPTY_PROXY);
+      setTest(null);
+      setMsg("已清除代理，恢复直连");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testNow() {
+    setErr("");
+    setMsg("");
+    setTesting(true);
+    try {
+      const r = await api.testNetworkProxy({ ...payload(), enabled: true });
+      setTest(r);
+      setMsg(r.httpsOk ? `GitHub HTTPS 通，耗时 ${r.httpsMs} ms` : "GitHub HTTPS 未通，请检查代理");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Card title="网络代理">
+      <div className="stack">
+        {err && <div className="err-text">{err}</div>}
+        {msg && <div className="callout info">{msg}</div>}
+        <div className="field">
+          <div className="between">
+            <div>
+              <FieldLabel
+                name="启用代理"
+                tip="只作用于本应用发起的请求（检查更新、GitHub API、Git HTTPS、SSH、云同步），不改系统代理。"
+              />
+              <div className="hint">部分地区访问 GitHub / GitLab 不稳定时打开。密码保存在本机配置文件。</div>
+            </div>
+            <button
+              type="button"
+              className={"switch" + (form.enabled ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ enabled: !form.enabled })}
+            />
+          </div>
+        </div>
+
+        <div className="field">
+          <label className="field-label">协议</label>
+          <div className="choice-row">
+            {(["http", "https", "socks5"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={"choice" + (form.scheme === s ? " on" : "")}
+                onClick={() => patch({ scheme: s })}
+              >
+                {s.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <div className="field grow">
+            <label className="field-label">主机</label>
+            <input
+              className="input mono"
+              value={form.host}
+              onChange={(e) => patch({ host: e.target.value })}
+              placeholder="127.0.0.1"
+            />
+          </div>
+          <div className="field" style={{ width: 110 }}>
+            <label className="field-label">端口</label>
+            <input
+              className="input mono"
+              type="number"
+              min={1}
+              max={65535}
+              value={form.port}
+              onChange={(e) => patch({ port: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <div className="field grow">
+            <label className="field-label">用户名（可选）</label>
+            <input className="input" value={form.username ?? ""} onChange={(e) => patch({ username: e.target.value })} />
+          </div>
+          <div className="field grow">
+            <label className="field-label">密码（可选）</label>
+            <input
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={form.password ?? ""}
+              onChange={(e) => patch({ password: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div className="field">
+          <div className="between">
+            <FieldLabel name="Git HTTPS 走代理" tip="本应用执行 git clone 等 HTTPS 请求时写入 HTTP(S)_PROXY。" />
+            <button
+              type="button"
+              className={"switch" + (form.applyToGitHttps ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ applyToGitHttps: !form.applyToGitHttps })}
+            />
+          </div>
+        </div>
+        <div className="field">
+          <div className="between">
+            <FieldLabel
+              name="SSH 走代理"
+              tip="为本应用拉起的 ssh / git 注入 ProxyCommand。需要本机有 Git 的 connect 或 ncat。不修改 ~/.ssh/config。"
+            />
+            <button
+              type="button"
+              className={"switch" + (form.applyToSsh ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ applyToSsh: !form.applyToSsh })}
+            />
+          </div>
+        </div>
+        <div className="field">
+          <div className="between">
+            <FieldLabel name="云同步走代理" tip="R2 / S3 备份默认跟随总开关。国内对象存储可关掉此项。" />
+            <button
+              type="button"
+              className={"switch" + (form.applyToCloudSync ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ applyToCloudSync: !form.applyToCloudSync })}
+            />
+          </div>
+        </div>
+
+        {test && (
+          <div className={"callout " + (test.httpsOk ? "good" : "warn")}>
+            <div>{test.httpsOk ? `GitHub HTTPS 成功（${test.httpsMs} ms）` : test.httpsError}</div>
+            {test.sshNote && <div>{test.sshNote}</div>}
+          </div>
+        )}
+
+        <div className="row" style={{ flexWrap: "wrap", marginTop: 4 }}>
+          <button type="button" className="btn primary sm" disabled={busy || testing} onClick={testNow}>
+            <Globe size={13} style={{ marginRight: 3 }} />
+            {testing ? "正在测试…" : "测试连接"}
+          </button>
+          <button type="button" className="btn sm" disabled={busy} onClick={save}>
+            保存
+          </button>
+          <button type="button" className="btn ghost sm" disabled={busy} onClick={clearProxy}>
+            清除代理
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function AboutUpdateCard() {
   const [version, setVersion] = useState("");
   const [lastCheck, setLastCheck] = useState<string | null>(null);
@@ -415,9 +697,7 @@ function AboutUpdateCard() {
                 <strong>新版本 {result.latestVersion}</strong>
                 {result.pubDate ? ` · ${formatWhen(result.pubDate)}` : ""}
               </div>
-              {result.notes && (
-                <pre className="update-notes">{result.notes}</pre>
-              )}
+              {result.notes && <UpdateNotes notes={result.notes} />}
               {showManualOnly && (
                 <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
                   当前安装方式不支持应用内更新（例如 Linux 非 AppImage），请使用手动下载。
@@ -531,6 +811,8 @@ function AboutUpdateCard() {
           </div>
         </div>
       </Card>
+
+      <NetworkProxyCard />
     </div>
   );
 }
