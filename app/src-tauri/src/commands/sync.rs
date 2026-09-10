@@ -215,8 +215,8 @@ pub fn test_cloud_sync_config(state: State<AppState>, sync_config: S3Config) -> 
     client.test_connection()
 }
 
-#[tauri::command]
-pub fn get_cloud_sync_status(state: State<AppState>, lite: Option<bool>) -> Result<CloudSyncStatus> {
+#[tauri::command(async)]
+pub fn get_cloud_sync_status(state: State<'_, AppState>, lite: Option<bool>) -> Result<CloudSyncStatus> {
     let lite = lite.unwrap_or(false);
     // 轻量进页刷新可复用热缓存；手动「刷新」走完整探测。
     if lite {
@@ -261,8 +261,8 @@ pub struct CloudSyncPageData {
 }
 
 /// 页面首屏：只读本地配置/计数与缓存，绝不访问云端。
-#[tauri::command]
-pub fn get_cloud_sync_page(state: State<AppState>) -> Result<CloudSyncPageData> {
+#[tauri::command(async)]
+pub fn get_cloud_sync_page(state: State<'_, AppState>) -> Result<CloudSyncPageData> {
     let vault = clone_unlocked_vault(&state)?;
     let (config, auto_sync) = {
         let cfg = state.config.lock().unwrap();
@@ -292,8 +292,8 @@ pub fn get_cloud_sync_page(state: State<AppState>) -> Result<CloudSyncPageData> 
     })
 }
 
-#[tauri::command]
-pub fn cloud_sync_push(state: State<AppState>) -> Result<SyncResult> {
+#[tauri::command(async)]
+pub fn cloud_sync_push(state: State<'_, AppState>) -> Result<SyncResult> {
     crate::commands::ensure_writes_allowed(&state)?;
     let vault_guard = state.vault.lock().unwrap();
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
@@ -308,12 +308,13 @@ pub fn cloud_sync_push(state: State<AppState>) -> Result<SyncResult> {
 
     let client = reuse_s3_client(&state, sync_config)?;
     let result = engine::push_to_cloud(vault, &client)?;
+    let _ = crate::commands::write::reconcile_ssh_hosts(vault);
     invalidate_view_cache();
     Ok(result)
 }
 
-#[tauri::command]
-pub fn cloud_sync_pull(state: State<AppState>) -> Result<SyncResult> {
+#[tauri::command(async)]
+pub fn cloud_sync_pull(state: State<'_, AppState>) -> Result<SyncResult> {
     let vault_guard = state.vault.lock().unwrap();
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
 
@@ -327,6 +328,7 @@ pub fn cloud_sync_pull(state: State<AppState>) -> Result<SyncResult> {
 
     let client = reuse_s3_client(&state, sync_config)?;
     let result = engine::pull_from_cloud(vault, &client)?;
+    let _ = crate::commands::write::reconcile_ssh_hosts(vault);
     invalidate_view_cache();
     Ok(result)
 }
@@ -396,6 +398,7 @@ pub fn restore_cloud_snapshot(state: State<AppState>, snapshot_id: String) -> Re
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
     let client = require_client(&state)?;
     let result = engine::restore_snapshot(vault, &client, &snapshot_id)?;
+    let _ = crate::commands::write::reconcile_ssh_hosts(vault);
     invalidate_view_cache();
     // 直接推送恢复结果，避免再拉一次把当前云端较新数据合并回来。
     if let Ok(pushed) = engine::push_to_cloud(vault, &client) {
@@ -475,6 +478,11 @@ pub fn restore_from_cloud(
         include_repos.unwrap_or(false),
     )?;
     crate::commands::vault::adopt_unlocked_vault(&state, vault, path, Some(sync_config))?;
+    if let Ok(guard) = state.vault.lock() {
+        if let Some(v) = guard.as_ref() {
+            let _ = crate::commands::write::reconcile_ssh_hosts(v);
+        }
+    }
     crate::commands::vault::schedule_after_unlock(app);
     Ok(result)
 }

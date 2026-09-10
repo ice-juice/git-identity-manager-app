@@ -21,8 +21,8 @@ pub struct AgentStatus {
 }
 
 /// 查询 agent 状态并按指纹反查身份。
-#[tauri::command]
-pub fn agent_status(state: State<AppState>) -> Result<AgentStatus> {
+#[tauri::command(async)]
+pub fn agent_status(state: State<'_, AppState>) -> Result<AgentStatus> {
     let env = state.agent_env.lock().unwrap().clone();
     let using_fallback = env.auth_sock.is_some();
     let unify_status = unify::inspect(&env);
@@ -68,8 +68,8 @@ pub fn agent_status(state: State<AppState>) -> Result<AgentStatus> {
 }
 
 /// 确保 Git 自带 ssh-agent 可用。
-#[tauri::command]
-pub fn agent_ensure(state: State<AppState>) -> Result<AgentStatus> {
+#[tauri::command(async)]
+pub fn agent_ensure(state: State<'_, AppState>) -> Result<AgentStatus> {
     ready_env(&state)?;
     agent_status(state)
 }
@@ -111,8 +111,8 @@ pub fn bootstrap_git_agent(app: &AppHandle) {
 }
 
 /// 写入 git config / 用户环境 / 终端 profile。`confirmed` 必须为 true。
-#[tauri::command]
-pub fn agent_unify_env(state: State<AppState>, confirmed: bool) -> Result<unify::AgentUnifyReport> {
+#[tauri::command(async)]
+pub fn agent_unify_env(state: State<'_, AppState>, confirmed: bool) -> Result<unify::AgentUnifyReport> {
     if !confirmed {
         return Err(AppError::Invalid(
             "未确认写入用户环境，已取消。不会修改系统环境变量。".into(),
@@ -132,8 +132,8 @@ pub fn agent_unify_env(state: State<AppState>, confirmed: bool) -> Result<unify:
 }
 
 /// 加载单把密钥。
-#[tauri::command]
-pub fn agent_load(state: State<AppState>, key_id: String) -> Result<()> {
+#[tauri::command(async)]
+pub fn agent_load(state: State<'_, AppState>, key_id: String) -> Result<()> {
     let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
@@ -143,8 +143,8 @@ pub fn agent_load(state: State<AppState>, key_id: String) -> Result<()> {
 }
 
 /// 按身份加载其绑定的密钥。
-#[tauri::command]
-pub fn agent_load_identity(state: State<AppState>, identity_id: String) -> Result<()> {
+#[tauri::command(async)]
+pub fn agent_load_identity(state: State<'_, AppState>, identity_id: String) -> Result<()> {
     let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
@@ -163,8 +163,8 @@ pub fn agent_load_identity(state: State<AppState>, identity_id: String) -> Resul
 }
 
 /// 解锁后自动加载所有身份的密钥（状态灯转绿）。
-#[tauri::command]
-pub fn agent_load_all(state: State<AppState>) -> Result<u32> {
+#[tauri::command(async)]
+pub fn agent_load_all(state: State<'_, AppState>) -> Result<u32> {
     let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
@@ -182,8 +182,8 @@ pub fn agent_load_all(state: State<AppState>) -> Result<u32> {
 }
 
 /// 卸载某把密钥（按 key_id 找公钥再 ssh-add -d）。
-#[tauri::command]
-pub fn agent_unload(state: State<AppState>, key_id: String) -> Result<()> {
+#[tauri::command(async)]
+pub fn agent_unload(state: State<'_, AppState>, key_id: String) -> Result<()> {
     let env = ready_env(&state)?;
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
@@ -197,8 +197,8 @@ pub fn agent_unload(state: State<AppState>, key_id: String) -> Result<()> {
 }
 
 /// 清空 agent 全部密钥。
-#[tauri::command]
-pub fn agent_clear(state: State<AppState>) -> Result<()> {
+#[tauri::command(async)]
+pub fn agent_clear(state: State<'_, AppState>) -> Result<()> {
     let env = ready_env(&state)?;
     agent::clear(&env)
 }

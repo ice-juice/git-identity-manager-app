@@ -75,6 +75,7 @@ pub fn run() {
             commands::assets::detect_toolchain,
             commands::assets::list_keys,
             commands::assets::list_identities,
+            commands::assets::workspace_nav_counts,
             commands::assets::import_key,
             commands::assets::import_key_from_path,
             commands::assets::test_connection,

@@ -1,11 +1,11 @@
 ### 下载建议
-- **语言**：中文界面选「御钥师」开头的文件，英文界面选 `Git Keymaster` 开头的文件
-- **签名文件**：同名 `.sig` 一般不用下载
-- **Windows（推荐）**：`*_x64-setup.exe`（安装向导，之后可在应用内更新）
-- **Windows**：中文版产品名含汉字，只出 NSIS 安装包，不出 MSI
-- **macOS（推荐）**：`*_universal.dmg`（Intel 与 Apple Silicon 通用）
-- **macOS 更新包**：`*_universal.app.tar.gz` 仅供应用内自动更新，不必手动下载
-- **Linux 自动更新（推荐）**：`*_amd64.AppImage`，下载后赋予执行权限即可运行
-- **Debian / Ubuntu**：`*_amd64.deb`
-- **Fedora / RHEL / openSUSE**：`*.x86_64.rpm`
+- **怎么认语言**：所有安装包都以 `Git.Keymaster_` 开头，用文件名里的语言码区分。`zh-CN` 是中文界面，`en-US` 是英文界面，同一平台成对出现
+- **签名文件**：同名 `.sig` 给应用内更新用，一般不用手动下载
+- **Windows（推荐安装向导）**：`Git.Keymaster_{{VERSION}}_x64_zh-CN-setup.exe` 或 `Git.Keymaster_{{VERSION}}_x64_en-US-setup.exe`
+- **Windows MSI**：`Git.Keymaster_{{VERSION}}_x64_zh-CN.msi` 或 `Git.Keymaster_{{VERSION}}_x64_en-US.msi`
+- **macOS（推荐）**：`Git.Keymaster_{{VERSION}}_universal_zh-CN.dmg` 或 `Git.Keymaster_{{VERSION}}_universal_en-US.dmg`
+- **macOS 更新包**：`*.app.tar.gz` 仅供应用内自动更新，不必手动下载
+- **Linux 自动更新（推荐）**：`Git.Keymaster_{{VERSION}}_amd64_zh-CN.AppImage` 或 `Git.Keymaster_{{VERSION}}_amd64_en-US.AppImage`，下载后赋予执行权限
+- **Debian / Ubuntu**：`Git.Keymaster_{{VERSION}}_amd64_zh-CN.deb` 或 `Git.Keymaster_{{VERSION}}_amd64_en-US.deb`
+- **Fedora / RHEL / openSUSE**：`Git.Keymaster_{{VERSION}}_x86_64_zh-CN.rpm` 或 `Git.Keymaster_{{VERSION}}_x86_64_en-US.rpm`
 - **Linux 包管理器**：用 deb / rpm 安装后请用系统软件包更新；应用内自更新只支持 AppImage

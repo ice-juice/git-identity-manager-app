@@ -102,8 +102,8 @@ pub fn check_workspace_path(path: String) -> PathCheck {
 }
 
 /// 初始化工作空间。会做 Argon2id 运行时标定（略慢，属正常）。
-#[tauri::command]
-pub fn vault_init(state: State<AppState>, path: String, password: String) -> Result<InitResult> {
+#[tauri::command(async)]
+pub fn vault_init(state: State<'_, AppState>, path: String, password: String) -> Result<InitResult> {
     let root = PathBuf::from(&path);
     let kdf: KdfParams = calibrate(DEFAULT_TARGET_MS);
     let (vault, recovery_key) = Vault::init(&root, &password, kdf)?;
@@ -163,8 +163,8 @@ fn ensure_loaded(state: &AppState) -> Result<()> {
 }
 
 /// 用访问密码解锁（带限速）。
-#[tauri::command]
-pub fn vault_unlock(app: AppHandle, state: State<AppState>, password: String) -> Result<()> {
+#[tauri::command(async)]
+pub fn vault_unlock(app: AppHandle, state: State<'_, AppState>, password: String) -> Result<()> {
     {
         let guard = state.unlock_guard.lock().unwrap();
         if guard.remaining_ms() > 0 {
@@ -191,8 +191,8 @@ pub fn vault_unlock(app: AppHandle, state: State<AppState>, password: String) ->
 }
 
 /// 用恢复密钥解锁（忘记密码/换机）。
-#[tauri::command]
-pub fn vault_unlock_recovery(app: AppHandle, state: State<AppState>, recovery_key: String) -> Result<()> {
+#[tauri::command(async)]
+pub fn vault_unlock_recovery(app: AppHandle, state: State<'_, AppState>, recovery_key: String) -> Result<()> {
     ensure_loaded(&state)?;
     let mut vault = state.vault.lock().unwrap();
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
@@ -302,34 +302,36 @@ fn grant_grace_if_configured(state: &AppState) {
 }
 
 fn load_agent_best_effort(state: &AppState) {
-    {
+    let env = {
         let env = state.agent_env.lock().unwrap().clone();
-        if !crate::agent::is_ready(&env) {
-            if let Ok(started) = crate::agent::ensure() {
-                *state.agent_env.lock().unwrap() = started;
-            }
+        if crate::agent::is_ready(&env) {
+            env
+        } else if let Ok(started) = crate::agent::ensure() {
+            *state.agent_env.lock().unwrap() = started.clone();
+            started
+        } else {
+            env
         }
-    }
-    let env = state.agent_env.lock().unwrap().clone();
-    let vault = state.vault.lock().unwrap();
-    let Some(v) = vault.as_ref() else {
-        return;
     };
-    if !v.is_unlocked() {
-        return;
-    }
-    if let Ok(data) = crate::store::load_data(v) {
+    let vault = {
+        let guard = state.vault.lock().unwrap();
+        match guard.as_ref().filter(|v| v.is_unlocked()).cloned() {
+            Some(v) => v,
+            None => return,
+        }
+    };
+    if let Ok(data) = crate::store::load_data(&vault) {
         for identity in &data.identities {
             if let Some(key_id) = &identity.key_id {
-                let _ = crate::agent::load_key(v, &env, key_id);
+                let _ = crate::agent::load_key(&vault, &env, key_id);
             }
         }
     }
 }
 
 /// 启动时尝试用未过期的本机会话解锁并加载 agent。
-#[tauri::command]
-pub fn vault_try_grace_unlock(app: AppHandle, state: State<AppState>) -> Result<bool> {
+#[tauri::command(async)]
+pub fn vault_try_grace_unlock(app: AppHandle, state: State<'_, AppState>) -> Result<bool> {
     let ok = try_grace_unlock_silent(&state);
     if ok {
         // 首个 IPC 只恢复本机会话并立刻返回，让 WebView 先画出首帧。
@@ -390,20 +392,16 @@ pub(crate) fn schedule_after_unlock(app: AppHandle) {
         set_startup_note(&state, &app, "正在从云端拉取身份数据…");
         let _ = crate::sync::scheduler::run(&app, "startup");
         set_startup_note(&state, &app, "正在补齐 SSH 配置…");
-        {
-            let vault = match state.vault.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    state.bootstrap_busy.store(false, std::sync::atomic::Ordering::SeqCst);
-                    end_write_lock(&state, &app);
-                    return;
-                }
-            };
-            if let Some(v) = vault.as_ref() {
-                if v.is_unlocked() {
-                    let _ = crate::commands::write::reconcile_ssh_hosts(v);
-                }
+        let vault_clone = match state.vault.lock() {
+            Ok(g) => g.as_ref().filter(|v| v.is_unlocked()).cloned(),
+            Err(_) => {
+                state.bootstrap_busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                end_write_lock(&state, &app);
+                return;
             }
+        };
+        if let Some(v) = vault_clone {
+            let _ = crate::commands::write::reconcile_ssh_hosts(&v);
         }
         set_startup_note(&state, &app, "正在加载 ssh-agent…");
         load_agent_best_effort(&state);

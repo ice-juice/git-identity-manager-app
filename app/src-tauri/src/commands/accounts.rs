@@ -50,8 +50,8 @@ fn now() -> String {
     util::now_rfc3339()
 }
 
-#[tauri::command]
-pub fn account_list(state: State<AppState>) -> Result<AccountList> {
+#[tauri::command(async)]
+pub fn account_list(state: State<'_, AppState>) -> Result<AccountList> {
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {

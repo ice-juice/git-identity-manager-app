@@ -4,8 +4,8 @@ use crate::commands::AppState;
 use crate::security::{self, SecurityChecklist};
 use tauri::State;
 
-#[tauri::command]
-pub fn security_checklist(state: State<AppState>) -> SecurityChecklist {
+#[tauri::command(async)]
+pub fn security_checklist(state: State<'_, AppState>) -> SecurityChecklist {
     let cfg = state.config.lock().unwrap().clone();
     security::build_checklist(&cfg)
 }

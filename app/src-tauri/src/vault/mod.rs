@@ -258,21 +258,59 @@ impl Vault {
 }
 
 /// 原子写：写临时文件后 rename，避免写一半损坏。
+/// Windows 上若目标只读、被短暂锁住或禁止覆盖改名，会清只读、重试，再回退为直接覆盖。
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     let dir = path.parent().ok_or_else(|| AppError::Invalid("无效路径".into()))?;
-    std::fs::create_dir_all(dir)?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| AppError::Io(format!("创建目录 {} 失败：{e}", dir.display())))?;
     let tmp = dir.join(format!(
         ".{}.tmp-{}",
         path.file_name().and_then(|s| s.to_str()).unwrap_or("f"),
         uuid::Uuid::new_v4()
     ));
-    std::fs::write(&tmp, data)?;
-    // Windows 上 rename 覆盖已存在文件会失败，先删旧。
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
+    if let Err(e) = std::fs::write(&tmp, data) {
+        return Err(AppError::Io(format!(
+            "写入临时文件 {} 失败：{e}",
+            tmp.display()
+        )));
     }
-    std::fs::rename(&tmp, path)?;
+    if let Err(e) = replace_file_with_tmp(path, &tmp, data) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(AppError::Io(format!("写入 {} 失败：{e}", path.display())));
+    }
+    let _ = std::fs::remove_file(&tmp);
     Ok(())
+}
+
+fn make_writable(path: &Path) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+}
+
+fn replace_file_with_tmp(path: &Path, tmp: &Path, data: &[u8]) -> std::io::Result<()> {
+    if path.exists() {
+        make_writable(path);
+        for attempt in 0..4 {
+            match std::fs::remove_file(path) {
+                Ok(()) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(_) if attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(20 * (attempt as u64 + 1)));
+                    make_writable(path);
+                }
+                Err(_) => return std::fs::write(path, data),
+            }
+        }
+    }
+    match std::fs::rename(tmp, path) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::write(path, data),
+    }
 }
 
 fn now_iso8601() -> String {
@@ -293,6 +331,23 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("gam-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_and_readonly_file() {
+        let dir = temp_root();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("note.txt");
+        std::fs::write(&path, b"old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).unwrap();
+        atomic_write(&path, b"newer").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"newer");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

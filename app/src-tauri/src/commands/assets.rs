@@ -41,19 +41,26 @@ fn workspace_root(state: &AppState) -> Option<std::path::PathBuf> {
 }
 
 /// 读取工作空间 SSH config 正本（不是 ~/.ssh/config 的 Include 入口）。
-#[tauri::command]
-pub fn read_ssh_config(state: State<AppState>) -> Result<ConfigView> {
+/// `repair=true` 才补写 Host / Include；总览等只读入口不要传，避免每次切页卡十几秒。
+#[tauri::command(async)]
+pub fn read_ssh_config(state: State<'_, AppState>, repair: Option<bool>) -> Result<ConfigView> {
     let root = workspace_root(&state).ok_or_else(|| AppError::Invalid("尚未设置工作空间".into()))?;
+    if repair.unwrap_or(false)
+        && !state.writes_locked.load(std::sync::atomic::Ordering::SeqCst)
     {
-        let vault = state.vault.lock().unwrap();
-        if let Some(v) = vault.as_ref() {
-            if v.is_unlocked() && !state.writes_locked.load(std::sync::atomic::Ordering::SeqCst) {
-                let _ = crate::commands::write::reconcile_ssh_hosts(v);
-            }
+        let vault = {
+            let guard = state.vault.lock().unwrap();
+            guard
+                .as_ref()
+                .filter(|v| v.is_unlocked())
+                .cloned()
+        };
+        if let Some(v) = vault {
+            let _ = crate::commands::write::reconcile_ssh_hosts(&v);
         }
+        let _ = sys::ensure_home_ssh_bridge(&root);
     }
-    let (path, raw) = sys::read_workspace_ssh_config(&root);
-    let _ = sys::ensure_home_ssh_bridge(&root);
+    let (path, raw) = sys::read_workspace_ssh_config(&root)?;
     let cfg = config::parse(&raw);
     let mut diagnostics = config::diagnose(&cfg, |p| sys::expand_path(p).exists());
     if sys::text_is_include_only(&raw) {
@@ -66,6 +73,25 @@ pub fn read_ssh_config(state: State<AppState>) -> Result<ConfigView> {
                 host: None,
             },
         );
+    }
+    if !sys::text_has_host_blocks(&raw) {
+        if let Ok(vault) = state.vault.lock() {
+            if let Some(v) = vault.as_ref().filter(|v| v.is_unlocked()) {
+                if let Ok(data) = crate::store::load_data(v) {
+                    if data.identities.iter().any(|id| !id.host_alias.trim().is_empty()) {
+                        diagnostics.insert(
+                            0,
+                            Diagnostic {
+                                severity: Severity::Error,
+                                code: "hosts-missing-after-restore".into(),
+                                message: "身份已在库中，但工作空间 ssh/config 没有 Host。请点刷新重试；若仍为空，检查本机是否拒绝写入 ~/.ssh 或工作空间 ssh 目录。".into(),
+                                host: None,
+                            },
+                        );
+                    }
+                }
+            }
+        }
     }
     let system_path = sys::home_ssh_config();
     let dest = sys::workspace_ssh_config(&root);
@@ -112,8 +138,8 @@ pub struct ScannedKey {
 }
 
 /// 扫描 `~/.ssh` 及 config 引用到的外部路径，返回密钥清单。
-#[tauri::command]
-pub fn scan_keys(state: State<AppState>) -> Result<Vec<ScannedKey>> {
+#[tauri::command(async)]
+pub fn scan_keys(state: State<'_, AppState>) -> Result<Vec<ScannedKey>> {
     // 已入库指纹集合（若已解锁）。
     let in_vault: std::collections::HashSet<String> = {
         let vault = state.vault.lock().unwrap();
@@ -188,7 +214,7 @@ pub fn scan_keys(state: State<AppState>) -> Result<Vec<ScannedKey>> {
 }
 
 /// 探测 ssh 工具链（运行 `ssh -V` 解析版本）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_toolchain() -> Toolchain {
     let mut tc = Toolchain::default();
     for (source, path) in toolchain::candidate_paths() {
@@ -246,8 +272,8 @@ fn detect_git_ssh() -> Option<String> {
 }
 
 /// 列出 vault 中已登记的密钥（需已解锁）。
-#[tauri::command]
-pub fn list_keys(state: State<AppState>) -> Result<Vec<KeyRecord>> {
+#[tauri::command(async)]
+pub fn list_keys(state: State<'_, AppState>) -> Result<Vec<KeyRecord>> {
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
     let root = v.root().to_path_buf();
@@ -261,11 +287,40 @@ pub fn list_keys(state: State<AppState>) -> Result<Vec<KeyRecord>> {
 }
 
 /// 列出 vault 中的身份（需已解锁）。
-#[tauri::command]
-pub fn list_identities(state: State<AppState>) -> Result<Vec<Identity>> {
+#[tauri::command(async)]
+pub fn list_identities(state: State<'_, AppState>) -> Result<Vec<Identity>> {
     let vault = state.vault.lock().unwrap();
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
     Ok(crate::store::load_data(v)?.identities)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceNavCounts {
+    pub identities: usize,
+    pub keys: usize,
+    pub repos: usize,
+}
+
+/// 侧栏角标：只读加密库计数，不跑 git / ssh-agent。
+#[tauri::command(async)]
+pub fn workspace_nav_counts(state: State<'_, AppState>) -> Result<WorkspaceNavCounts> {
+    let vault = state.vault.lock().unwrap();
+    let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
+    if !v.is_unlocked() {
+        return Err(AppError::Locked);
+    }
+    let data = crate::store::load_data(v)?;
+    let machine_id = crate::app_config::AppConfig::current_machine_id();
+    Ok(WorkspaceNavCounts {
+        identities: data.identities.len(),
+        keys: data.keys.len(),
+        repos: data
+            .repos
+            .iter()
+            .filter(|r| r.machine_id == machine_id || r.machine_id.is_empty())
+            .count(),
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -324,8 +379,8 @@ pub fn import_key_from_path(app: AppHandle, state: State<AppState>, path: String
 }
 
 /// 连接体检：对某个 Host 别名跑 `ssh -T`，解析账号名/错误。
-#[tauri::command]
-pub fn test_connection(state: State<AppState>, host_alias: String) -> Result<AuthResult> {
+#[tauri::command(async)]
+pub fn test_connection(state: State<'_, AppState>, host_alias: String) -> Result<AuthResult> {
     let env = {
         let current = state.agent_env.lock().unwrap().clone();
         if crate::agent::is_ready(&current) {

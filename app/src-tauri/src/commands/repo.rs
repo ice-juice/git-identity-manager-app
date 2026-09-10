@@ -212,58 +212,63 @@ pub fn scan_and_import_repos(
 }
 
 /// 列出已登记仓库，并回读磁盘上的 origin。
-#[tauri::command]
-pub async fn list_managed_repos(state: State<'_, AppState>) -> Result<Vec<ManagedRepoView>> {
-    with_vault(&state, |v| {
-        let mut data = store::load_data(v)?;
-        let machine_id = current_machine_id();
-        let mut dirty = crate::model::claim_unowned_repos(&mut data, &machine_id);
-        if crate::model::keep_repos_for_machine(&mut data, &machine_id) {
-            dirty = true;
+#[tauri::command(async)]
+pub fn list_managed_repos(state: State<'_, AppState>) -> Result<Vec<ManagedRepoView>> {
+    let (mut data, vault) = {
+        let guard = state.vault.lock().unwrap();
+        let v = guard.as_ref().ok_or(AppError::Locked)?;
+        if !v.is_unlocked() {
+            return Err(AppError::Locked);
         }
-        let identities = data.identities.clone();
-        let history = data.clone_history.clone();
-        let mut views = Vec::with_capacity(data.repos.len());
-        for rec in data.repos.iter_mut() {
-            let exists = PathBuf::from(&rec.path).is_dir();
-            let mut current_alias = None;
-            let mut needs_alias_fix = false;
-            let mut remote_url = rec.remote_url.clone();
-            // 目录不存在时绝不调用 git，避免无效路径把 UI 卡住。
-            if exists {
-                let live = repo::inspect(std::path::Path::new(&rec.path), &identities, &history);
-                if live.remote_url.is_some() && live.remote_url != rec.remote_url {
-                    rec.remote_url = live.remote_url.clone();
-                    dirty = true;
-                }
-                if live.remote_url.is_some() {
-                    remote_url = live.remote_url;
-                }
-                current_alias = live.current_alias;
-                needs_alias_fix = live.needs_alias_fix;
+        (store::load_data(v)?, v.clone())
+    };
+    let machine_id = current_machine_id();
+    let mut dirty = crate::model::claim_unowned_repos(&mut data, &machine_id);
+    if crate::model::keep_repos_for_machine(&mut data, &machine_id) {
+        dirty = true;
+    }
+    let identities = data.identities.clone();
+    let history = data.clone_history.clone();
+    let mut views = Vec::with_capacity(data.repos.len());
+    for rec in data.repos.iter_mut() {
+        let exists = PathBuf::from(&rec.path).is_dir();
+        let mut current_alias = None;
+        let mut needs_alias_fix = false;
+        let mut remote_url = rec.remote_url.clone();
+        // 目录不存在时绝不调用 git，避免无效路径把 UI 卡住。
+        if exists {
+            let live = repo::inspect(std::path::Path::new(&rec.path), &identities, &history);
+            if live.remote_url.is_some() && live.remote_url != rec.remote_url {
+                rec.remote_url = live.remote_url.clone();
+                dirty = true;
             }
-            views.push(ManagedRepoView {
-                id: rec.id.clone(),
-                path: rec.path.clone(),
-                name: rec.name.clone(),
-                remote_url,
-                identity_id: rec.identity_id.clone(),
-                identity_name: identities
-                    .iter()
-                    .find(|i| rec.identity_id.as_deref() == Some(i.id.as_str()))
-                    .map(|i| i.name.clone()),
-                added_at: rec.added_at.clone(),
-                source: rec.source.clone(),
-                exists,
-                current_alias,
-                needs_alias_fix,
-            });
+            if live.remote_url.is_some() {
+                remote_url = live.remote_url;
+            }
+            current_alias = live.current_alias;
+            needs_alias_fix = live.needs_alias_fix;
         }
-        if dirty {
-            store::save_data(v, &data)?;
-        }
-        Ok(views)
-    })
+        views.push(ManagedRepoView {
+            id: rec.id.clone(),
+            path: rec.path.clone(),
+            name: rec.name.clone(),
+            remote_url,
+            identity_id: rec.identity_id.clone(),
+            identity_name: identities
+                .iter()
+                .find(|i| rec.identity_id.as_deref() == Some(i.id.as_str()))
+                .map(|i| i.name.clone()),
+            added_at: rec.added_at.clone(),
+            source: rec.source.clone(),
+            exists,
+            current_alias,
+            needs_alias_fix,
+        });
+    }
+    if dirty {
+        store::save_data(&vault, &data)?;
+    }
+    Ok(views)
 }
 
 /// 从管理列表移除（不删除磁盘目录）。
@@ -674,8 +679,8 @@ pub struct GithubPatStatus {
 }
 
 /// 查询是否已保存 GitHub PAT（不回传令牌本身）。
-#[tauri::command]
-pub fn github_pat_status(state: State<AppState>) -> Result<GithubPatStatus> {
+#[tauri::command(async)]
+pub fn github_pat_status(state: State<'_, AppState>) -> Result<GithubPatStatus> {
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         Ok(GithubPatStatus {
@@ -723,8 +728,8 @@ pub fn clear_github_pat(app: AppHandle, state: State<AppState>) -> Result<()> {
 }
 
 /// 校验 PAT 并返回账号名。
-#[tauri::command]
-pub fn test_github_pat(state: State<AppState>) -> Result<String> {
+#[tauri::command(async)]
+pub fn test_github_pat(state: State<'_, AppState>) -> Result<String> {
     let proxy = crate::net::effective(&state.config.lock().unwrap());
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
@@ -736,8 +741,8 @@ pub fn test_github_pat(state: State<AppState>) -> Result<String> {
 }
 
 /// 拉取 PAT 账号所属组织（供批量导入归属标识）。
-#[tauri::command]
-pub fn list_github_orgs(state: State<AppState>) -> Result<Vec<String>> {
+#[tauri::command(async)]
+pub fn list_github_orgs(state: State<'_, AppState>) -> Result<Vec<String>> {
     let proxy = crate::net::effective(&state.config.lock().unwrap());
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;

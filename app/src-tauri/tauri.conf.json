@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "御钥师",
   "mainBinaryName": "git-account-manager",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "identifier": "com.jeck.gitaccountmanager",
   "build": {
     "frontendDist": "../dist",

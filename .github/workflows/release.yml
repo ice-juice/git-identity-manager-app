@@ -88,10 +88,10 @@ jobs:
         include:
           - platform: windows-latest
             lang: zh
-            args: "--bundles nsis"
+            args: "--bundles nsis,msi"
           - platform: windows-latest
             lang: en
-            args: "--bundles nsis"
+            args: "--bundles nsis,msi"
           - platform: macos-latest
             lang: zh
             args: "--target universal-apple-darwin"
@@ -221,13 +221,24 @@ jobs:
           projectPath: app
           args: ${{ matrix.args }}
           tagName: ${{ steps.meta.outputs.tag }}
-          releaseName: ${{ matrix.lang == 'en' && 'Git Keymaster' || '御钥师' }} ${{ steps.meta.outputs.tag }} (${{ matrix.lang == 'en' && 'English' || '中文版' }})
+          releaseName: Git Keymaster ${{ steps.meta.outputs.tag }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           releaseCommitish: release
           includeUpdaterJson: ${{ steps.meta.outputs.publish == 'true' }}
           updaterJsonPreferNsis: true
           updaterJsonKeepUniversal: true
+
+      - name: Stamp locale on installer names
+        shell: bash
+        run: node scripts/rename-release-assets.mjs ${{ matrix.lang == 'en' && 'en-US' || 'zh-CN' }}
+
+      - name: Sync renamed assets to GitHub Release
+        if: steps.meta.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/sync-release-assets.sh "${{ steps.meta.outputs.tag }}"
 
       - name: Upload installers
         uses: actions/upload-artifact@v4

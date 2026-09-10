@@ -416,7 +416,10 @@ export const api = {
   clearClosePreference: () => invoke<void>("clear_close_preference"),
 
   // assets (M2)
-  readSshConfig: () => invoke<ConfigView>("read_ssh_config"),
+  readSshConfig: (repair?: boolean) =>
+    invoke<ConfigView>("read_ssh_config", repair ? { repair: true } : {}),
+  workspaceNavCounts: () =>
+    invoke<{ identities: number; keys: number; repos: number }>("workspace_nav_counts"),
   openSshConfig: () => invoke<string>("open_ssh_config"),
   scanKeys: () => invoke<ScannedKey[]>("scan_keys"),
   detectToolchain: () => invoke<Toolchain>("detect_toolchain"),

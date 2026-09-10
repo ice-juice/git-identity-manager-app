@@ -624,8 +624,12 @@ pub fn push_to_cloud(vault: &Vault, s3: &S3Client) -> Result<SyncResult> {
         }
     }
     // (4) 工作空间 SSH config：只上传可移植形态，绝不上传本机重写后的绝对路径。
+    // 换机后本机正本若仍为空，不得用空文件盖掉云端已有 Host。
+    let remote_manifest = fetch_remote_manifest(vault, s3).ok().flatten();
     if let Some(portable) = ssh_text_for_sync(vault) {
-        logical_objects.insert("ssh/config".into(), portable.into_bytes());
+        if crate::sys::text_has_host_blocks(&portable) {
+            logical_objects.insert("ssh/config".into(), portable.into_bytes());
+        }
     }
 
     let mut manifest_objects = HashMap::new();
@@ -652,6 +656,16 @@ pub fn push_to_cloud(vault: &Vault, s3: &S3Client) -> Result<SyncResult> {
                 updated_at: now_str.clone(),
             },
         );
+    }
+
+    if !manifest_objects.contains_key("ssh/config") {
+        if let Some(prev) = remote_manifest
+            .as_ref()
+            .and_then(|m| m.objects.get("ssh/config"))
+            .cloned()
+        {
+            manifest_objects.insert("ssh/config".into(), prev);
+        }
     }
 
     // 3. 构建并上传 manifest.enc
@@ -801,10 +815,11 @@ fn pull_from_cloud_inner(
     } else {
         local_acc.clone()
     };
-    // 先落机密再落条目，避免列表已可见但种子还在旧 secrets.enc 上。
+    // 先落机密与身份，再写 SSH。~/.ssh 被拒绝写入时不能把已拉下来的身份一起丢掉。
     store::save_secrets(vault, &current_secrets)?;
     store::save_totp(vault, &merged_totp)?;
     store::save_accounts(vault, &merged_acc)?;
+    store::save_data(vault, &current_data)?;
     for key_id in &pulled_key_ids {
         if let (Some(key_rec), Ok(raw)) = (
             current_data.keys.iter().find(|k| k.id == *key_id),
@@ -815,17 +830,18 @@ fn pull_from_cloud_inner(
     }
 
     if let Some(snapshot) = &remote_ssh_snap {
-        apply_pulled_ssh(
+        if let Err(e) = apply_pulled_ssh(
             vault,
             snapshot,
             apply_remote_ssh,
             &local_identities_before,
             remote_data_snap.as_ref(),
             &current_data,
-        )?;
+        ) {
+            // 身份/密钥已落盘。SSH 正本失败交给随后的 reconcile 按身份补齐，不能整段拉取报失败。
+            log::warn!("应用云端 SSH config 失败（身份数据已保存，将按身份补齐 Host）: {e}");
+        }
     }
-
-    store::save_data(vault, &current_data)?;
     let ssh_now = read_ssh_config_bytes(vault).unwrap_or_default();
     let remote_hash = match remote_data_snap {
         Some(rd) => Some(stable_state_hash(
@@ -1461,6 +1477,15 @@ mod tests {
         assert_eq!(first.id, "n0");
         assert!(first.created_at.starts_with("2026-09-09T08:"));
         assert!(items.iter().any(|m| m.id == "n11" && m.is_recent));
+    }
+
+    #[test]
+    fn empty_local_ssh_is_not_uploadable() {
+        assert!(!crate::sys::text_has_host_blocks(""));
+        assert!(!crate::sys::text_has_host_blocks("# comment\nInclude git-account-manager.config\n"));
+        assert!(crate::sys::text_has_host_blocks(
+            "Host github-a\n    HostName github.com\n    User git\n"
+        ));
     }
 
     #[test]

@@ -8,17 +8,23 @@ export function ConfigPage() {
   const [err, setErr] = useState("");
   const { writesLocked } = useApp();
 
-  async function load() {
+  async function load(repair = false) {
     setErr("");
     try {
-      setView(await api.readSshConfig());
+      setView(await api.readSshConfig(repair));
     } catch (e) {
       setErr(errMessage(e));
     }
   }
 
   useEffect(() => {
-    load();
+    load(false);
+  }, []);
+
+  useEffect(() => {
+    if (!writesLocked) {
+      load(true);
+    }
   }, [writesLocked]);
 
   return (
@@ -42,7 +48,7 @@ export function ConfigPage() {
             >
               用记事本打开并编辑
             </button>
-            <button className="btn ghost" onClick={load}>刷新</button>
+            <button className="btn ghost" onClick={() => load(true)}>刷新</button>
           </div>
         }
       />

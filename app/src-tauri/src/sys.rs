@@ -365,6 +365,7 @@ fn write_home_include_mirror(text: &str) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     crate::vault::atomic_write(&dest, text.as_bytes())?;
+    // 只有被 ~/.ssh/config Include 的镜像需要收紧 ACL；工作空间正本不要动。
     let _ = tighten_user_acl(&dest);
     Ok(())
 }
@@ -443,9 +444,12 @@ pub fn ensure_home_ssh_bridge(workspace: &std::path::Path) -> Result<()> {
     let dest = workspace_ssh_config(workspace);
     let text = std::fs::read_to_string(&dest).unwrap_or_default();
     let text = localize_ssh_config(&text, workspace);
-    write_home_include_mirror(&text)?;
-    write_system_include_stub(&dest)?;
-    let _ = tighten_user_acl(&dest);
+    if let Err(e) = write_home_include_mirror(&text) {
+        log::warn!("写入 ~/.ssh 镜像失败：{e}");
+    }
+    if let Err(e) = write_system_include_stub(&dest) {
+        log::warn!("写入 ~/.ssh/config Include 入口失败：{e}");
+    }
     Ok(())
 }
 
@@ -477,14 +481,15 @@ pub fn adopt_ssh_config(workspace: &std::path::Path) -> Result<std::path::PathBu
         )?;
     }
 
-    write_system_include_stub(&dest)?;
+    if let Err(e) = write_system_include_stub(&dest) {
+        log::warn!("写入 ~/.ssh/config Include 入口失败：{e}");
+    }
     let dest_text = std::fs::read_to_string(&dest).unwrap_or_default();
     let localized = localize_ssh_config(&dest_text, workspace);
     if localized != dest_text {
         crate::vault::atomic_write(&dest, localized.as_bytes())?;
     }
     let _ = write_home_include_mirror(&localized);
-    let _ = tighten_user_acl(&dest);
     Ok(dest)
 }
 
@@ -503,11 +508,39 @@ pub fn persist_ssh_config(workspace: Option<&std::path::Path>, text: &str) -> Re
         std::fs::create_dir_all(parent)?;
     }
     let text = localize_ssh_config(text, ws);
+    // 换机后若上次 icacls 把正本收成不可写，先把当前用户加回去，避免整段同步失败。
+    ensure_current_user_can_write(&dest);
     crate::vault::atomic_write(&dest, text.as_bytes())?;
-    let _ = write_home_include_mirror(&text);
-    write_system_include_stub(&dest)?;
-    let _ = tighten_user_acl(&dest);
+    // ~/.ssh 受 Controlled Folder Access / 只读/占用时经常 Error 5。
+    // 正本已在工作空间，系统入口失败不得打断云端拉取或按身份重建 Host。
+    if let Err(e) = write_home_include_mirror(&text) {
+        log::warn!("写入 ~/.ssh 镜像失败（工作空间正本已保存）：{e}");
+    }
+    if let Err(e) = write_system_include_stub(&dest) {
+        log::warn!("写入 ~/.ssh/config Include 入口失败（工作空间正本已保存）：{e}");
+    }
     Ok(())
+}
+
+/// 只追加当前用户写权限，不关闭继承。用于修复被误收紧的工作空间文件。
+fn ensure_current_user_can_write(path: &std::path::Path) {
+    if !path.exists() {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let p = path.to_string_lossy().to_string();
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        if user.is_empty() {
+            return;
+        }
+        let grant = format!("{user}:F");
+        let _ = run("icacls", &[&p, "/grant:r", &grant]);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+    }
 }
 
 /// Windows OpenSSH 要求被 Include 的 config 不能被其他用户读取。
@@ -533,16 +566,30 @@ fn tighten_user_acl(path: &std::path::Path) -> Result<()> {
 }
 
 /// 只读工作空间正本，不跑迁移、不改系统入口。
-pub fn read_workspace_ssh_config(workspace: &std::path::Path) -> (std::path::PathBuf, String) {
+/// 文件不存在视为空；权限不足等真实读失败会带上路径，避免界面误显示成「空配置」。
+pub fn read_workspace_ssh_config(workspace: &std::path::Path) -> Result<(std::path::PathBuf, String)> {
     let dest = workspace_ssh_config(workspace);
-    let text = std::fs::read_to_string(&dest).unwrap_or_default();
-    (dest, text)
+    match std::fs::read_to_string(&dest) {
+        Ok(text) => Ok((dest, text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((dest, String::new())),
+        Err(_) => {
+            ensure_current_user_can_write(&dest);
+            match std::fs::read_to_string(&dest) {
+                Ok(text) => Ok((dest, text)),
+                Err(e2) => Err(AppError::Io(format!(
+                    "读取 {} 失败：{e2}。若刚从云端恢复，请确认当前用户对该文件有读写权限。",
+                    dest.display()
+                ))),
+            }
+        }
+    }
 }
 
 /// 读取工作空间正本。无工作空间时读本机文件。
 pub fn read_canonical_ssh_config(workspace: Option<&std::path::Path>) -> (std::path::PathBuf, String) {
     if let Some(ws) = workspace {
-        return read_workspace_ssh_config(ws);
+        return read_workspace_ssh_config(ws)
+            .unwrap_or_else(|_| (workspace_ssh_config(ws), String::new()));
     }
     let home = home_ssh_config();
     let text = std::fs::read_to_string(&home).unwrap_or_default();

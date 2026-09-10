@@ -34,7 +34,9 @@ fn persist_workspace_ssh_config(v: &Vault, text: &str) -> Result<()> {
 }
 
 fn load_workspace_ssh_config(v: &Vault) -> String {
-    sys::read_workspace_ssh_config(v.root()).1
+    sys::read_workspace_ssh_config(v.root())
+        .map(|(_, text)| text)
+        .unwrap_or_default()
 }
 
 /// 按库内身份补齐工作空间 SSH Host。正本若被写成 Include stub 会先清空再重建。
@@ -209,7 +211,9 @@ fn deploy_openssh_files(v: &Vault, record: &KeyRecord, stem: &str, strict: bool)
     } else {
         let priv_bytes = store::load_key(v, &record.id)?;
         std::fs::write(&priv_path, &priv_bytes)?;
-        platform::current().secure_key_file(&priv_path)?;
+        if let Err(e) = platform::current().secure_key_file(&priv_path) {
+            log::warn!("收紧密钥文件权限失败 {}：{e}", priv_path.display());
+        }
         priv_path
     };
     Ok(sys::identity_file_for_ssh(&target))

@@ -27,15 +27,11 @@ export function Layout({ children }: { children: ReactNode }) {
     let unmounted = false;
     (async () => {
       try {
-        const [ids, ks, repos] = await Promise.all([
-          api.listIdentities(),
-          api.listKeys(),
-          api.listManagedRepos().catch(() => []),
-        ]);
+        const counts = await api.workspaceNavCounts();
         if (!unmounted) {
-          setIdCount(ids.length);
-          setKeyCount(ks.length);
-          setRepoCount(repos.length);
+          setIdCount(counts.identities);
+          setKeyCount(counts.keys);
+          setRepoCount(counts.repos);
         }
       } catch {
         /* 忽略 */
