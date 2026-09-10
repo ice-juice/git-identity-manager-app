@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { HashRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/ipc";
@@ -16,10 +16,10 @@ import { Repos } from "./pages/Repos";
 import { ClonePage } from "./pages/Clone";
 import { SyncPage } from "./pages/Sync";
 import { Settings } from "./pages/Settings";
+import { TotpPage } from "./pages/Totp";
+import { AccountsPage } from "./pages/Accounts";
 import { CloseConfirmHost } from "./ui/CloseConfirm";
-
-// 过场动画懒加载：未开启/未触发时不会进入主包
-const UnlockAnimation = lazy(() => import("./ui/UnlockAnimation"));
+import UnlockAnimation from "./ui/UnlockAnimation";
 
 function AppShell() {
   return (
@@ -30,12 +30,24 @@ function AppShell() {
 }
 
 export default function App() {
-  const { status, loading, refresh, setWritesLock, playUnlockAnim, endUnlockAnim } = useApp();
+  const {
+    status,
+    loading,
+    refresh,
+    setWritesLock,
+    playUnlockAnim,
+    animPreviewStyle,
+    unlockAnimStyle,
+    animPlayId,
+    endUnlockAnim,
+  } = useApp();
 
   const unlockOverlay = playUnlockAnim ? (
-    <Suspense fallback={null}>
-      <UnlockAnimation onDone={endUnlockAnim} />
-    </Suspense>
+    <UnlockAnimation
+      key={animPlayId}
+      style={animPreviewStyle || unlockAnimStyle}
+      onDone={endUnlockAnim}
+    />
   ) : null;
 
   useEffect(() => {
@@ -117,6 +129,8 @@ export default function App() {
             <Route path="/agent" element={<AgentPage />} />
             <Route path="/repos" element={<Repos />} />
             <Route path="/clone" element={<ClonePage />} />
+            <Route path="/totp" element={<TotpPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/sync" element={<SyncPage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />

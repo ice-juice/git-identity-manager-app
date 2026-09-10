@@ -214,6 +214,7 @@ pub fn lock_in_memory(state: &AppState) {
     if let Some(v) = state.vault.lock().unwrap().as_mut() {
         v.lock();
     }
+    crate::commands::clear_reveal_grace(state);
     state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut n) = state.startup_note.lock() {
         *n = None;

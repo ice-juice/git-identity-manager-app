@@ -5,11 +5,26 @@ use std::collections::HashMap;
 
 mod serde_maps {
     use serde::ser::{SerializeMap, Serializer};
+    use serde::Serialize;
     use std::collections::HashMap;
 
     /// HashMap 的 JSON 键序不稳定，会导致云端清单哈希每次推送后对不上。
     pub fn ordered_string_map<S: Serializer>(
         map: &HashMap<String, String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        ordered_map(map, serializer)
+    }
+
+    pub fn ordered_account_secret_map<S: Serializer>(
+        map: &HashMap<String, super::AccountSecret>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        ordered_map(map, serializer)
+    }
+
+    fn ordered_map<S: Serializer, V: Serialize>(
+        map: &HashMap<String, V>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         let mut items: Vec<_> = map.iter().collect();
@@ -111,6 +126,98 @@ pub struct Secrets {
     pub key_passphrases: HashMap<String, String>,
     /// GitHub PAT。
     pub github_pat: Option<String>,
+    /// totpId -> Base32 种子。
+    #[serde(default, serialize_with = "serde_maps::ordered_string_map")]
+    pub totp_seeds: HashMap<String, String>,
+    /// accountId -> 密码与历史。
+    #[serde(default, serialize_with = "serde_maps::ordered_account_secret_map")]
+    pub account_secrets: HashMap<String, AccountSecret>,
+}
+
+/// 一个 TOTP 条目（元数据；种子单独存 Secrets）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TotpEntry {
+    pub id: String,
+    pub issuer: String,
+    pub account: String,
+    pub note: Option<String>,
+    pub url: Option<String>,
+    pub group: Option<String>,
+    pub algorithm: String,
+    pub digits: u8,
+    pub period: u32,
+    pub icon: Option<String>,
+    pub sort_order: i32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 一个隐私账号（元数据；密码单独存 Secrets）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountEntry {
+    pub id: String,
+    pub platform: String,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub url: Option<String>,
+    pub note: Option<String>,
+    pub group: Option<String>,
+    pub tags: Vec<String>,
+    pub icon: Option<String>,
+    pub pinned: bool,
+    pub sort_order: i32,
+    pub totp_ref: Option<String>,
+    pub last_used_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 分组元数据。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMeta {
+    pub name: String,
+    pub color: Option<String>,
+    pub sort_order: i32,
+}
+
+/// data/totp.enc
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TotpData {
+    pub entries: Vec<TotpEntry>,
+    pub groups: Vec<GroupMeta>,
+    #[serde(default, serialize_with = "serde_maps::ordered_string_map")]
+    pub deleted_entries: HashMap<String, String>,
+}
+
+/// data/accounts.enc
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountData {
+    pub entries: Vec<AccountEntry>,
+    pub groups: Vec<GroupMeta>,
+    #[serde(default, serialize_with = "serde_maps::ordered_string_map")]
+    pub deleted_entries: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSecret {
+    pub password: String,
+    #[serde(default)]
+    pub extra_fields: HashMap<String, String>,
+    #[serde(default)]
+    pub history: Vec<PasswordHistoryItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordHistoryItem {
+    pub password: String,
+    pub replaced_at: String,
 }
 
 /// 多端合并：身份按 `updated_at` 取较新；墓碑用于传播删除；仓库并集，但尊重删除墓碑。
@@ -266,6 +373,145 @@ pub fn compose_cloud_repos(local: &VaultData, remote: &VaultData, machine_id: &s
         }
     }
     (repos, deleted)
+}
+
+fn merge_tombstones(mut a: HashMap<String, String>, b: HashMap<String, String>) -> HashMap<String, String> {
+    for (id, ts) in b {
+        match a.get(&id) {
+            Some(old) if old >= &ts => {}
+            _ => {
+                a.insert(id, ts);
+            }
+        }
+    }
+    a
+}
+
+fn merge_groups(mut local: Vec<GroupMeta>, remote: Vec<GroupMeta>) -> Vec<GroupMeta> {
+    for g in remote {
+        if !local.iter().any(|x| x.name == g.name) {
+            local.push(g);
+        }
+    }
+    local
+}
+
+/// TOTP 条目按 updated_at 取新，墓碑传播删除；分组按名称去重后并集。
+pub fn merge_totp_data(local: TotpData, remote: TotpData) -> TotpData {
+    let deleted = merge_tombstones(local.deleted_entries, remote.deleted_entries);
+    let mut entries: HashMap<String, TotpEntry> = HashMap::new();
+    for item in local.entries {
+        entries.insert(item.id.clone(), item);
+    }
+    for item in remote.entries {
+        match entries.get(&item.id) {
+            Some(local_item) if timestamp_newer_or_eq(&local_item.updated_at, &item.updated_at) => {}
+            _ => {
+                entries.insert(item.id.clone(), item);
+            }
+        }
+    }
+    let entries: Vec<TotpEntry> = entries
+        .into_values()
+        .filter(|item| match deleted.get(&item.id) {
+            Some(ts) if timestamp_newer_or_eq(ts, &item.updated_at) => false,
+            _ => true,
+        })
+        .collect();
+    TotpData {
+        entries,
+        groups: merge_groups(local.groups, remote.groups),
+        deleted_entries: deleted,
+    }
+}
+
+/// 账号条目按 updated_at 取新，墓碑传播删除。
+pub fn merge_account_data(local: AccountData, remote: AccountData) -> AccountData {
+    let deleted = merge_tombstones(local.deleted_entries, remote.deleted_entries);
+    let mut entries: HashMap<String, AccountEntry> = HashMap::new();
+    for item in local.entries {
+        entries.insert(item.id.clone(), item);
+    }
+    for item in remote.entries {
+        match entries.get(&item.id) {
+            Some(local_item) if timestamp_newer_or_eq(&local_item.updated_at, &item.updated_at) => {}
+            _ => {
+                entries.insert(item.id.clone(), item);
+            }
+        }
+    }
+    let entries: Vec<AccountEntry> = entries
+        .into_values()
+        .filter(|item| match deleted.get(&item.id) {
+            Some(ts) if timestamp_newer_or_eq(ts, &item.updated_at) => false,
+            _ => true,
+        })
+        .collect();
+    AccountData {
+        entries,
+        groups: merge_groups(local.groups, remote.groups),
+        deleted_entries: deleted,
+    }
+}
+
+/// 机密并集：密钥口令/PAT 仍是本地优先补缺；TOTP/账号机密跟条目 `updated_at` 对齐。
+pub fn merge_secrets(local: Secrets, remote: &Secrets) -> Secrets {
+    merge_secrets_with_meta(local, remote, None, None, None, None)
+}
+
+pub fn merge_secrets_with_meta(
+    mut local: Secrets,
+    remote: &Secrets,
+    local_totp: Option<&TotpData>,
+    remote_totp: Option<&TotpData>,
+    local_accounts: Option<&AccountData>,
+    remote_accounts: Option<&AccountData>,
+) -> Secrets {
+    for (k, v) in remote.key_passphrases.clone() {
+        local.key_passphrases.entry(k).or_insert(v);
+    }
+    if local.github_pat.is_none() {
+        local.github_pat = remote.github_pat.clone();
+    }
+    for (k, v) in remote.totp_seeds.clone() {
+        if take_remote_secret(
+            totp_updated_at(local_totp, &k),
+            totp_updated_at(remote_totp, &k),
+            local.totp_seeds.contains_key(&k),
+        ) {
+            local.totp_seeds.insert(k, v);
+        }
+    }
+    for (k, v) in remote.account_secrets.clone() {
+        if take_remote_secret(
+            account_updated_at(local_accounts, &k),
+            account_updated_at(remote_accounts, &k),
+            local.account_secrets.contains_key(&k),
+        ) {
+            local.account_secrets.insert(k, v);
+        }
+    }
+    local
+}
+
+fn totp_updated_at<'a>(data: Option<&'a TotpData>, id: &str) -> Option<&'a str> {
+    data.and_then(|d| d.entries.iter().find(|e| e.id == id).map(|e| e.updated_at.as_str()))
+}
+
+fn account_updated_at<'a>(data: Option<&'a AccountData>, id: &str) -> Option<&'a str> {
+    data.and_then(|d| d.entries.iter().find(|e| e.id == id).map(|e| e.updated_at.as_str()))
+}
+
+/// 远程条目更新，或本地还没有这份机密时，采用远程。
+fn take_remote_secret(local_ts: Option<&str>, remote_ts: Option<&str>, local_has: bool) -> bool {
+    if !local_has {
+        return true;
+    }
+    match (remote_ts, local_ts) {
+        (Some(rt), Some(lt)) => !timestamp_newer_or_eq(lt, rt),
+        (Some(_), None) => true,
+        _ => false,
+    }
 }
 
 pub fn timestamp_newer_or_eq(a: &str, b: &str) -> bool {
@@ -456,5 +702,72 @@ mod tests {
             text.find("\"alpha\"").unwrap() < text.find("\"zeta\"").unwrap(),
             "clone_history 应按键名排序序列化"
         );
+    }
+
+    fn totp(id: &str, issuer: &str, updated_at: &str) -> TotpEntry {
+        TotpEntry {
+            id: id.into(),
+            issuer: issuer.into(),
+            account: "a".into(),
+            note: None,
+            url: None,
+            group: None,
+            algorithm: "SHA1".into(),
+            digits: 6,
+            period: 30,
+            icon: None,
+            sort_order: 0,
+            created_at: updated_at.into(),
+            updated_at: updated_at.into(),
+        }
+    }
+
+    #[test]
+    fn merge_totp_prefers_newer_and_tombstone() {
+        let local = TotpData {
+            entries: vec![totp("a", "local-new", "2026-09-09T12:00:00Z")],
+            deleted_entries: HashMap::from([("c".into(), "2026-09-08T00:00:00Z".into())]),
+            ..TotpData::default()
+        };
+        let remote = TotpData {
+            entries: vec![
+                totp("a", "remote-old", "2026-09-08T00:00:00Z"),
+                totp("c", "should-drop", "2026-09-07T00:00:00Z"),
+                totp("d", "remote-only", "2026-09-09T11:00:00Z"),
+            ],
+            ..TotpData::default()
+        };
+        let merged = merge_totp_data(local, remote);
+        let names: HashMap<_, _> = merged.entries.iter().map(|e| (e.id.as_str(), e.issuer.as_str())).collect();
+        assert_eq!(names.get("a"), Some(&"local-new"));
+        assert_eq!(names.get("d"), Some(&"remote-only"));
+        assert!(!names.contains_key("c"));
+    }
+
+    #[test]
+    fn merge_totp_secret_follows_newer_entry() {
+        let local_data = TotpData {
+            entries: vec![totp("a", "local-old", "2026-09-08T00:00:00Z")],
+            ..TotpData::default()
+        };
+        let remote_data = TotpData {
+            entries: vec![totp("a", "remote-new", "2026-09-09T12:00:00Z")],
+            ..TotpData::default()
+        };
+        let mut local = Secrets::default();
+        local.totp_seeds.insert("a".into(), "LOCALSEED".into());
+        let mut remote = Secrets::default();
+        remote.totp_seeds.insert("a".into(), "REMOTESEED".into());
+        remote.totp_seeds.insert("b".into(), "ONLYREMOTE".into());
+        let merged = merge_secrets_with_meta(
+            local,
+            &remote,
+            Some(&local_data),
+            Some(&remote_data),
+            None,
+            None,
+        );
+        assert_eq!(merged.totp_seeds.get("a").map(String::as_str), Some("REMOTESEED"));
+        assert_eq!(merged.totp_seeds.get("b").map(String::as_str), Some("ONLYREMOTE"));
     }
 }

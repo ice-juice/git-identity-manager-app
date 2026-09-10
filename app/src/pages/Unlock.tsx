@@ -3,7 +3,6 @@ import { Sun, Moon, Palette } from "lucide-react";
 import { api, errMessage } from "../lib/ipc";
 import { useApp } from "../store";
 import { AppLogo } from "../ui/AppLogo";
-import { prefersReducedMotion } from "../lib/prefs";
 
 export function Unlock() {
   const { refresh, theme, toggleTheme, unlockAnimEnabled, startUnlockAnim } = useApp();
@@ -22,8 +21,8 @@ export function Unlock() {
       } else {
         await api.vaultUnlock(pw);
       }
-      // 手动解锁成功后播放开门动画（静默/免验证解锁不会走到这里）
-      if (unlockAnimEnabled && !prefersReducedMotion()) {
+      // 只看应用内开关。系统「减少动态效果」不再偷偷跳过，否则用户会以为动画坏了。
+      if (unlockAnimEnabled) {
         startUnlockAnim();
       }
       await refresh();

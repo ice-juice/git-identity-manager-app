@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Cloud, Eye, EyeOff, FolderPlus, Moon, Palette, Sun } from "lucide-react";
 import { api, errMessage, type CloudRestorePreview, type S3Config } from "../lib/ipc";
+import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 import { APP_LANG } from "../lib/config";
 
@@ -439,7 +440,7 @@ export function InitWizard() {
                   </div>
                   <div className="reckey">{recovery}</div>
                   <div className="row">
-                    <button type="button" className="btn primary sm" onClick={() => navigator.clipboard.writeText(recovery)}>
+                    <button type="button" className="btn primary sm" onClick={() => writeClipboard(recovery)}>
                       复制恢复密钥
                     </button>
                   </div>

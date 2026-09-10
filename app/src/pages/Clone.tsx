@@ -11,6 +11,7 @@ import {
   type Candidate,
 } from "../lib/ipc";
 import { PageHead, Card, Badge } from "../ui/common";
+import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 
 const CONF_LABEL: Record<string, string> = {
@@ -156,7 +157,7 @@ export function ClonePage() {
                   <button
                     type="button"
                     className="btn sm"
-                    onClick={() => navigator.clipboard.writeText(inf.rewrittenUrl!)}
+                    onClick={() => writeClipboard(inf.rewrittenUrl!)}
                   >
                     复制
                   </button>

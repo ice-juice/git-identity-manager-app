@@ -79,34 +79,43 @@ export function SyncPage() {
   const [importSuccess, setImportSuccess] = useState<BackupSummary | null>(null);
   const [importErr, setImportErr] = useState<string | null>(null);
 
-  // 加载已保存配置和状态
+  // 只读启动/自动同步留下的本地缓存，进页不探测、不同步。
   async function loadInitial() {
-    setLoadingStatus(true);
     try {
-      const cfg = await api.getCloudSyncConfig();
-      if (cfg) {
-        setS3Config(cfg);
+      const page = await api.getCloudSyncPage();
+      if (page.config) {
+        setS3Config(page.config);
       }
-      const st = await api.getCloudSyncStatus();
+      setCloudStatus(page.status);
+      setAutoSync(page.autoSync);
+      setSnapshots(page.snapshots);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function refreshRemote(lite: boolean) {
+    setLoadingStatus(true);
+    setLoadingSnaps(true);
+    try {
+      const [st, snaps] = await Promise.all([
+        api.getCloudSyncStatus(lite),
+        api.listCloudSnapshots(!lite).catch(() => []),
+      ]);
       setCloudStatus(st);
-      const auto = await api.getAutoSyncSettings();
-      setAutoSync(auto);
-      try {
-        setSnapshots(await api.listCloudSnapshots());
-      } catch {
-        setSnapshots([]);
-      }
+      setSnapshots(snaps);
     } catch (e) {
       console.error(e);
     } finally {
       setLoadingStatus(false);
+      setLoadingSnaps(false);
     }
   }
 
   async function loadSnapshots() {
     setLoadingSnaps(true);
     try {
-      setSnapshots(await api.listCloudSnapshots());
+      setSnapshots(await api.listCloudSnapshots(true));
     } catch {
       setSnapshots([]);
     } finally {
@@ -124,7 +133,6 @@ export function SyncPage() {
       const p = ev.payload;
       setSyncNotice(`${p.ok ? "✅" : "❌"} ${p.message}`);
       void loadInitial();
-      void loadSnapshots();
     })
       .then((fn) => {
         unlisten = fn;
@@ -223,17 +231,9 @@ export function SyncPage() {
     }
   }
 
-  // 刷新云同步状态
+  // 刷新云同步状态（完整探测，并同步刷新快照）
   async function refreshStatus() {
-    setLoadingStatus(true);
-    try {
-      const st = await api.getCloudSyncStatus();
-      setCloudStatus(st);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingStatus(false);
-    }
+    await refreshRemote(false);
   }
 
   // 推送到云端 (Push)
@@ -379,6 +379,8 @@ export function SyncPage() {
         return { text: "与当前空间不一致", cls: "danger" };
       case "not_synced":
         return { text: "云端暂无备份", cls: "warn" };
+      case "checking":
+        return { text: writesLocked ? "启动同步中" : "等待下次同步", cls: "muted" };
       default:
         return { text: "未配置云存储", cls: "muted" };
     }
@@ -388,7 +390,7 @@ export function SyncPage() {
     <div className="stack-lg">
       <PageHead
         title="云端同步与备份"
-        desc="多端零知识加密同步与本地离线归档备份"
+        desc="启动时自动拉取并检查一次；之后按定时规则与本地编辑推送。进入本页不会重复探测云端。"
         actions={
           <div className="flex gap-2">
             <button
@@ -454,10 +456,18 @@ export function SyncPage() {
                       color: cloudStatus?.remoteExists ? "var(--green)" : "var(--text-soft)",
                     }}
                   >
-                    {cloudStatus?.remoteExists ? "已就绪" : "待初次推送"}
+                    {cloudStatus?.status === "checking" || (loadingStatus && !cloudStatus?.remoteExists)
+                      ? "检测中…"
+                      : cloudStatus?.remoteExists
+                        ? "已就绪"
+                        : "待初次推送"}
                   </div>
                   <div className="stat-card-sub">
-                    {cloudStatus?.headerReady ? "换机恢复头部正常" : "无云端快照"}
+                    {cloudStatus?.status === "checking"
+                      ? "正在读取云端清单"
+                      : cloudStatus?.headerReady
+                        ? "换机恢复头部正常"
+                        : "无云端快照"}
                   </div>
                 </div>
               </div>
@@ -504,7 +514,7 @@ export function SyncPage() {
 
             <div className="sync-action-bar">
               <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5, flex: 1, minWidth: 180 }}>
-                数据出机前全量加密，新设备可在初始化时凭恢复密钥直接还原。
+                以上为最近一次启动或自动同步的结果。需要立刻核对云端时再点「刷新」。数据出机前全量加密。
               </div>
               <div className="sync-action-btns">
                 <button
@@ -563,7 +573,7 @@ export function SyncPage() {
                 <div>
                   <div style={{ fontSize: 11.5, fontWeight: 600 }}>同步周期</div>
                   <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>
-                    编辑身份或密钥后会自动推送；程序打开或唤醒时自动拉取。
+                    启动时自动拉取并检查一次。之后按周期先拉后推；编辑身份或密钥后会立即推送。
                   </div>
                 </div>
                 <div className="choice-row" style={{ margin: 0 }}>
@@ -752,7 +762,9 @@ export function SyncPage() {
               自动保留最近 10 份快照与近 14 天每日版本，支持一键按需回滚。
             </div>
             {snapshots.length === 0 ? (
-              <div className="muted sm">暂无历史快照，完成初次推送后将在此显示。</div>
+              <div className="muted sm">
+                {loadingSnaps ? "正在读取云端快照…" : "暂无历史快照，完成初次推送后将在此显示。"}
+              </div>
             ) : (
               <div className="list">
                 {snapshots.map((s, i) => {

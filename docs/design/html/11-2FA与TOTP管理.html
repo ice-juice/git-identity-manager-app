@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>2FA / TOTP 管理 (支持掩码按需查看 & 网格/列表切换) - 设计原型</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script>
+    function toggleView(mode) {
+      document.getElementById('gridView').style.display = mode === 'grid' ? 'grid' : 'none';
+      document.getElementById('listView').style.display = mode === 'list' ? 'block' : 'none';
+      document.getElementById('btnGrid').className = mode === 'grid' ? 'view-btn active' : 'view-btn';
+      document.getElementById('btnList').className = mode === 'list' ? 'view-btn active' : 'view-btn';
+    }
+    function revealCode(btn, code, seconds) {
+      const box = btn.parentElement;
+      box.innerHTML = `
+        <div class="totp-code">${code}</div>
+        <div class="countdown-ring" title="剩余 ${seconds} 秒">
+          <svg viewBox="0 0 36 36">
+            <circle class="bg-circle" cx="18" cy="18" r="14"></circle>
+            <circle class="val-circle" cx="18" cy="18" r="14" stroke-dasharray="88" stroke-dashoffset="24"></circle>
+          </svg>
+          <span class="sec-num">${seconds}</span>
+        </div>
+      `;
+    }
+  </script>
+</head>
+<body>
+<div class="window">
+  <!-- 窗口标题栏 -->
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title">Git 多账号管理器</span>
+    <span class="spacer"></span>
+    <span class="lockstate"><span class="lk"></span>已解锁 · 免密查看剩余 14m 20s</span>
+  </div>
+
+  <div class="body">
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+      <div class="brand">
+        <div class="logo">🔑</div>
+        <div class="name">账号管理器<small>juice 的工作空间</small></div>
+      </div>
+      <div class="nav-item"><span class="ic">▣</span>身份总览<span class="badge">3</span></div>
+      <div class="nav-item"><span class="ic">🔐</span>密钥管理<span class="badge">4</span></div>
+      <div class="nav-item"><span class="ic">⚙</span>SSH 配置</div>
+      <div class="nav-item"><span class="ic">◈</span>Agent</div>
+      <div class="nav-item"><span class="ic">◨</span>仓库与克隆</div>
+      <div class="nav-group">机密资产</div>
+      <div class="nav-item active"><span class="ic">⏱</span>2FA / TOTP<span class="badge">6</span></div>
+      <div class="nav-item"><span class="ic">👤</span>隐私账号<span class="badge">8</span></div>
+      <div class="nav-item"><span class="ic">☁</span>云同步</div>
+      <div class="grow"></div>
+      <div class="side-foot">
+        <div class="nav-item"><span class="ic">⚙</span>设置</div>
+        <div class="nav-item"><span class="ic">🔒</span>立即锁定</div>
+      </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <h1>2FA / MFA (TOTP) 管理</h1>
+          <div class="sub">集中管理两步验证 · 默认掩码保护（点击 👁️ 查看验证码）· 支持方块/列表双布局</div>
+        </div>
+        <span class="spacer"></span>
+
+        <!-- 布局形态切换组件 (方块卡片 / 紧凑列表) -->
+        <div class="view-switcher" style="margin-right:8px;">
+          <button id="btnGrid" class="view-btn active" onclick="toggleView('grid')" title="切换为方块卡片网格布局">⊞ 卡片</button>
+          <button id="btnList" class="view-btn" onclick="toggleView('list')" title="切换为紧凑表格列表布局">☰ 列表</button>
+        </div>
+
+        <button class="btn" title="一键识别屏幕中显示的二维码"><span style="font-size:15px">📷</span> 扫描屏幕</button>
+        <button class="btn"><span>⤓</span> 导入 ▾</button>
+        <button class="btn primary"><span>＋</span> 添加 TOTP</button>
+      </div>
+
+      <div class="content">
+        <!-- 顶部操作与筛选栏 -->
+        <div class="row between" style="margin-bottom: 16px; gap: 16px;">
+          <!-- 分组切换 Tabs -->
+          <div class="group-tabs">
+            <div class="group-tab active">全部 <span class="count">6</span></div>
+            <div class="group-tab">💼 工作平台 <span class="count">3</span></div>
+            <div class="group-tab">🧑 个人开发 <span class="count">2</span></div>
+            <div class="group-tab">☁️ 云服务 <span class="count">1</span></div>
+            <div class="group-tab" style="border-style:dashed">＋ 新建分组</div>
+          </div>
+
+          <!-- 快速检索输入框 -->
+          <div style="position: relative; width: 280px; flex: 0 0 280px;">
+            <input class="input" placeholder="🔍 搜索平台 / 账号 / 备注 / URL..." style="padding-left: 12px; font-size: 13px;">
+          </div>
+        </div>
+
+        <!-- 状态提示条 -->
+        <div class="callout info" style="margin-bottom: 18px; align-items: center; justify-content: space-between;">
+          <div class="row" style="gap: 10px;">
+            <span>🛡️</span>
+            <div><b>默认掩码保护模式</b>：所有动态密码进入时不自动泄露，点击 <b>👁️ 小眼睛图标</b> 后实时按需生成并刷新；复制后 <b>20 秒</b> 自动清空剪贴板。</div>
+          </div>
+          <div class="row" style="gap: 8px;">
+            <span class="badge2 i">免密时效生效中</span>
+            <span class="badge2 g">端到端加密</span>
+          </div>
+        </div>
+
+        <!-- 布局形态 1: 方块卡片网格视图 (Grid View，默认展示) -->
+        <div id="gridView" class="grid c3">
+          
+          <!-- 卡片 1: GitHub (已点击 👁️ 查看演示) -->
+          <div class="card totp-card">
+            <div class="totp-head">
+              <div class="totp-icon" style="background: linear-gradient(135deg, #24292e, #0f172a);">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+              </div>
+              <div class="totp-meta">
+                <div class="totp-issuer">GitHub <span class="badge2 i" style="font-size:10.5px">工作平台</span></div>
+                <div class="totp-account">techn4950 · <span class="muted">主开发账号</span></div>
+              </div>
+              <button class="btn sm ghost" title="打开关联网站" style="padding:4px 6px">🔗</button>
+            </div>
+
+            <!-- 动态验证码展示 (已解密查看态) -->
+            <div class="totp-code-box">
+              <div class="totp-code">739 214</div>
+              <!-- 环形倒计时进度条 (SVG) -->
+              <div class="countdown-ring" title="剩余 22 秒">
+                <svg viewBox="0 0 36 36">
+                  <circle class="bg-circle" cx="18" cy="18" r="14"></circle>
+                  <circle class="val-circle" cx="18" cy="18" r="14" stroke-dasharray="88" stroke-dashoffset="24"></circle>
+                </svg>
+                <span class="sec-num">22</span>
+              </div>
+            </div>
+
+            <div class="row between" style="margin-top:2px">
+              <button class="btn sm primary" style="flex:1; justify-content:center;">📋 复制验证码</button>
+              <button class="btn sm" title="重新取回原始密钥或生成二维码" style="padding:5px 8px">🔑 密钥/二维码</button>
+              <button class="btn sm ghost" style="padding:5px 8px">⋯</button>
+            </div>
+          </div>
+
+          <!-- 卡片 2: AWS Console (默认掩码状态 · 点击 👁️ 演示) -->
+          <div class="card totp-card">
+            <div class="totp-head">
+              <div class="totp-icon" style="background: linear-gradient(135deg, #ff9900, #ea580c);">
+                <span style="font-size:14px; font-weight:800;">AWS</span>
+              </div>
+              <div class="totp-meta">
+                <div class="totp-issuer">AWS IAM <span class="badge2 a" style="font-size:10.5px">云服务</span></div>
+                <div class="totp-account">prod-admin · <span class="muted">生产环境根凭据</span></div>
+              </div>
+              <button class="btn sm ghost" style="padding:4px 6px">🔗</button>
+            </div>
+
+            <!-- 默认掩码框：点击小眼睛才计算并展示 -->
+            <div class="totp-code-box">
+              <div class="totp-code masked">••••••</div>
+              <button class="btn sm primary" onclick="revealCode(this, '512 883', 22)" style="padding:4px 10px; font-size:12px;">
+                👁️ 查看验证码
+              </button>
+            </div>
+
+            <div class="row between" style="margin-top:2px">
+              <button class="btn sm" style="flex:1; justify-content:center;" onclick="alert('请先点击 👁️ 查看验证码后复制')">📋 复制</button>
+              <button class="btn sm" style="padding:5px 8px">🔑 密钥/二维码</button>
+              <button class="btn sm ghost" style="padding:5px 8px">⋯</button>
+            </div>
+          </div>
+
+          <!-- 卡片 3: Cloudflare (默认掩码状态) -->
+          <div class="card totp-card">
+            <div class="totp-head">
+              <div class="totp-icon" style="background: linear-gradient(135deg, #f38020, #fa541c);">
+                <span style="font-size:15px; font-weight:800;">CF</span>
+              </div>
+              <div class="totp-meta">
+                <div class="totp-issuer">Cloudflare <span class="badge2 i" style="font-size:10.5px">工作平台</span></div>
+                <div class="totp-account">dev@vchangr.com · <span class="muted">DNS解析</span></div>
+              </div>
+              <button class="btn sm ghost" style="padding:4px 6px">🔗</button>
+            </div>
+
+            <div class="totp-code-box">
+              <div class="totp-code masked">••••••</div>
+              <button class="btn sm primary" onclick="revealCode(this, '904 127', 22)" style="padding:4px 10px; font-size:12px;">
+                👁️ 查看验证码
+              </button>
+            </div>
+
+            <div class="row between" style="margin-top:2px">
+              <button class="btn sm" style="flex:1; justify-content:center;">📋 复制</button>
+              <button class="btn sm" style="padding:5px 8px">🔑 密钥/二维码</button>
+              <button class="btn sm ghost" style="padding:5px 8px">⋯</button>
+            </div>
+          </div>
+
+          <!-- 卡片 4: Google Workspace (默认掩码) -->
+          <div class="card totp-card">
+            <div class="totp-head">
+              <div class="totp-icon" style="background: linear-gradient(135deg, #4285f4, #0ea5e9);">
+                <span style="font-size:16px; font-weight:800;">G</span>
+              </div>
+              <div class="totp-meta">
+                <div class="totp-issuer">Google Workspace <span class="badge2 g" style="font-size:10.5px">个人开发</span></div>
+                <div class="totp-account">juice.coder@gmail.com</div>
+              </div>
+              <button class="btn sm ghost" style="padding:4px 6px">🔗</button>
+            </div>
+
+            <div class="totp-code-box">
+              <div class="totp-code masked">••••••</div>
+              <button class="btn sm primary" onclick="revealCode(this, '318 650', 5)" style="padding:4px 10px; font-size:12px;">
+                👁️ 查看验证码
+              </button>
+            </div>
+
+            <div class="row between" style="margin-top:2px">
+              <button class="btn sm" style="flex:1; justify-content:center;">📋 复制</button>
+              <button class="btn sm" style="padding:5px 8px">🔑 密钥/二维码</button>
+              <button class="btn sm ghost" style="padding:5px 8px">⋯</button>
+            </div>
+          </div>
+
+          <!-- 卡片 5: GitLab (默认掩码) -->
+          <div class="card totp-card">
+            <div class="totp-head">
+              <div class="totp-icon" style="background: linear-gradient(135deg, #fc6d26, #e24329);">
+                <span style="font-size:16px; font-weight:800;">🦊</span>
+              </div>
+              <div class="totp-meta">
+                <div class="totp-issuer">GitLab.com <span class="badge2 i" style="font-size:10.5px">工作平台</span></div>
+                <div class="totp-account">techn-git · <span class="muted">私有代码库</span></div>
+              </div>
+              <button class="btn sm ghost" style="padding:4px 6px">🔗</button>
+            </div>
+
+            <div class="totp-code-box">
+              <div class="totp-code masked">••••••</div>
+              <button class="btn sm primary" onclick="revealCode(this, '441 902', 22)" style="padding:4px 10px; font-size:12px;">
+                👁️ 查看验证码
+              </button>
+            </div>
+
+            <div class="row between" style="margin-top:2px">
+              <button class="btn sm" style="flex:1; justify-content:center;">📋 复制</button>
+              <button class="btn sm" style="padding:5px 8px">🔑 密钥/二维码</button>
+              <button class="btn sm ghost" style="padding:5px 8px">⋯</button>
+            </div>
+          </div>
+
+          <!-- 卡片 6: OpenAI (8位 掩码) -->
+          <div class="card totp-card">
+            <div class="totp-head">
+              <div class="totp-icon" style="background: linear-gradient(135deg, #10a37f, #059669);">
+                <span style="font-size:15px; font-weight:800;">AI</span>
+              </div>
+              <div class="totp-meta">
+                <div class="totp-issuer">OpenAI Platform <span class="badge2 g" style="font-size:10.5px">个人开发</span></div>
+                <div class="totp-account">developer-api · <span class="badge2 n" style="font-size:10px">8位</span></div>
+              </div>
+              <button class="btn sm ghost" style="padding:4px 6px">🔗</button>
+            </div>
+
+            <div class="totp-code-box">
+              <div class="totp-code masked">••••••••</div>
+              <button class="btn sm primary" onclick="revealCode(this, '6721 9540', 22)" style="padding:4px 10px; font-size:12px;">
+                👁️ 查看验证码
+              </button>
+            </div>
+
+            <div class="row between" style="margin-top:2px">
+              <button class="btn sm" style="flex:1; justify-content:center;">📋 复制</button>
+              <button class="btn sm" style="padding:5px 8px">🔑 密钥/二维码</button>
+              <button class="btn sm ghost" style="padding:5px 8px">⋯</button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 布局形态 2: 紧凑表格列表视图 (List View，点击顶部 ☰ 切换) -->
+        <div id="listView" class="totp-list-card" style="display:none;">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th style="width:260px;">平台 / 账号</th>
+                <th style="width:120px;">分组</th>
+                <th style="width:280px;">一次性密码 (TOTP)</th>
+                <th>备注 / 关联 URL</th>
+                <th style="text-align:right; width:140px;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- 行 1: GitHub (已查看) -->
+              <tr>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <div class="totp-icon" style="width:30px; height:30px; font-size:14px; background:#24292e;">GH</div>
+                    <div><b>GitHub</b><div class="muted mono" style="font-size:11.5px;">techn4950</div></div>
+                  </div>
+                </td>
+                <td><span class="badge2 i">💼 工作平台</span></td>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <span class="totp-code" style="font-size:20px;">739 214</span>
+                    <div class="countdown-ring" style="width:26px; height:26px;">
+                      <svg viewBox="0 0 36 36" style="width:26px; height:26px;">
+                        <circle class="bg-circle" cx="18" cy="18" r="14"></circle>
+                        <circle class="val-circle" cx="18" cy="18" r="14" stroke-dasharray="88" stroke-dashoffset="24"></circle>
+                      </svg>
+                      <span class="sec-num" style="font-size:9.5px;">22</span>
+                    </div>
+                    <button class="btn sm primary" style="padding:2px 7px; font-size:11.5px;">📋 复制</button>
+                  </div>
+                </td>
+                <td><span class="muted">主开发账号 2FA · <a href="#" style="color:var(--accent);">github.com ↗</a></span></td>
+                <td style="text-align:right;">
+                  <button class="btn sm" title="取回原始密钥/二维码">🔑</button>
+                  <button class="btn sm ghost">⋯</button>
+                </td>
+              </tr>
+
+              <!-- 行 2: AWS (掩码) -->
+              <tr>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <div class="totp-icon" style="width:30px; height:30px; font-size:11px; background:#ff9900;">AWS</div>
+                    <div><b>AWS IAM</b><div class="muted mono" style="font-size:11.5px;">prod-admin</div></div>
+                  </div>
+                </td>
+                <td><span class="badge2 a">☁️ 云服务</span></td>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <span class="mono" style="letter-spacing:3px; color:var(--text-mute); font-size:16px;">••••••</span>
+                    <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;">👁️ 查看</button>
+                  </div>
+                </td>
+                <td><span class="muted">生产环境根凭据</span></td>
+                <td style="text-align:right;">
+                  <button class="btn sm">🔑</button>
+                  <button class="btn sm ghost">⋯</button>
+                </td>
+              </tr>
+
+              <!-- 行 3: Cloudflare (掩码) -->
+              <tr>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <div class="totp-icon" style="width:30px; height:30px; font-size:11px; background:#f38020;">CF</div>
+                    <div><b>Cloudflare</b><div class="muted mono" style="font-size:11.5px;">dev@vchangr.com</div></div>
+                  </div>
+                </td>
+                <td><span class="badge2 i">💼 工作平台</span></td>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <span class="mono" style="letter-spacing:3px; color:var(--text-mute); font-size:16px;">••••••</span>
+                    <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;">👁️ 查看</button>
+                  </div>
+                </td>
+                <td><span class="muted">DNS 解析与 WAF 防护</span></td>
+                <td style="text-align:right;">
+                  <button class="btn sm">🔑</button>
+                  <button class="btn sm ghost">⋯</button>
+                </td>
+              </tr>
+
+              <!-- 行 4: Google Workspace (掩码) -->
+              <tr>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <div class="totp-icon" style="width:30px; height:30px; font-size:12px; background:#4285f4;">G</div>
+                    <div><b>Google Workspace</b><div class="muted mono" style="font-size:11.5px;">juice.coder@gmail.com</div></div>
+                  </div>
+                </td>
+                <td><span class="badge2 g">🧑 个人开发</span></td>
+                <td>
+                  <div class="row" style="gap:10px;">
+                    <span class="mono" style="letter-spacing:3px; color:var(--text-mute); font-size:16px;">••••••</span>
+                    <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;">👁️ 查看</button>
+                  </div>
+                </td>
+                <td><span class="muted">个人邮件与云盘</span></td>
+                <td style="text-align:right;">
+                  <button class="btn sm">🔑</button>
+                  <button class="btn sm ghost">⋯</button>
+                </td>
+              </tr>
+
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

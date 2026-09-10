@@ -2,7 +2,7 @@
 //! 文件格式：`nonce(24) || XChaCha20-Poly1305 密文`。
 
 use crate::error::{AppError, Result};
-use crate::model::{Secrets, VaultData};
+use crate::model::{AccountData, Secrets, TotpData, VaultData};
 use crate::vault::atomic_write;
 use crate::vault::crypto::{self, KEY_LEN, LABEL_KEYFILE, LABEL_METADATA, XNONCE_LEN};
 use crate::vault::Vault;
@@ -35,6 +35,15 @@ fn secrets_path(vault: &Vault) -> PathBuf {
 }
 fn key_path(vault: &Vault, key_id: &str) -> PathBuf {
     vault.root().join("keys").join(format!("{key_id}.enc"))
+}
+fn totp_path(vault: &Vault) -> PathBuf {
+    vault.root().join("data").join("totp.enc")
+}
+fn accounts_path(vault: &Vault) -> PathBuf {
+    vault.root().join("data").join("accounts.enc")
+}
+fn icon_path(vault: &Vault, hash: &str) -> PathBuf {
+    vault.root().join("icons").join(format!("{hash}.webp"))
 }
 
 /// 读取元数据容器（不存在时返回默认）。需已解锁。
@@ -90,6 +99,76 @@ pub fn load_key(vault: &Vault, key_id: &str) -> Result<Vec<u8>> {
 
 pub fn key_exists(vault: &Vault, key_id: &str) -> bool {
     key_path(vault, key_id).exists()
+}
+
+pub fn load_totp(vault: &Vault) -> Result<TotpData> {
+    let key = vault.subkey(LABEL_METADATA)?;
+    let path = totp_path(vault);
+    if !path.exists() {
+        return Ok(TotpData::default());
+    }
+    let raw = std::fs::read(&path)?;
+    let plain = open(&key, &raw)?;
+    Ok(serde_json::from_slice(&plain)?)
+}
+
+pub fn save_totp(vault: &Vault, data: &TotpData) -> Result<()> {
+    let key = vault.subkey(LABEL_METADATA)?;
+    let json = serde_json::to_vec(data)?;
+    let sealed = seal(&key, &json)?;
+    atomic_write(&totp_path(vault), &sealed)
+}
+
+pub fn load_accounts(vault: &Vault) -> Result<AccountData> {
+    let key = vault.subkey(LABEL_METADATA)?;
+    let path = accounts_path(vault);
+    if !path.exists() {
+        return Ok(AccountData::default());
+    }
+    let raw = std::fs::read(&path)?;
+    let plain = open(&key, &raw)?;
+    Ok(serde_json::from_slice(&plain)?)
+}
+
+pub fn save_accounts(vault: &Vault, data: &AccountData) -> Result<()> {
+    let key = vault.subkey(LABEL_METADATA)?;
+    let json = serde_json::to_vec(data)?;
+    let sealed = seal(&key, &json)?;
+    atomic_write(&accounts_path(vault), &sealed)
+}
+
+pub fn save_icon(vault: &Vault, hash: &str, webp: &[u8]) -> Result<()> {
+    atomic_write(&icon_path(vault, hash), webp)
+}
+
+pub fn load_icon(vault: &Vault, hash: &str) -> Result<Vec<u8>> {
+    let path = icon_path(vault, hash);
+    if !path.is_file() {
+        return Err(AppError::Invalid("自定义图标不存在".into()));
+    }
+    Ok(std::fs::read(path)?)
+}
+
+pub fn icon_exists(vault: &Vault, hash: &str) -> bool {
+    icon_path(vault, hash).is_file()
+}
+
+pub fn list_icon_hashes(vault: &Vault) -> Vec<String> {
+    let dir = vault.root().join("icons");
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for ent in rd.flatten() {
+        let name = ent.file_name();
+        let Some(s) = name.to_str() else { continue };
+        if let Some(hash) = s.strip_suffix(".webp") {
+            if !hash.is_empty() {
+                out.push(hash.to_string());
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -179,6 +258,33 @@ mod tests {
         let got = load_secrets(&v).unwrap();
         assert_eq!(got.key_passphrases.get("k1").unwrap(), "s3cr3t-pass");
         assert_eq!(got.github_pat.as_deref(), Some("ghp_xxx"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn totp_roundtrip_encrypted() {
+        let (v, root) = unlocked_vault();
+        let mut data = TotpData::default();
+        data.entries.push(crate::model::TotpEntry {
+            id: "t1".into(),
+            issuer: "GitHub".into(),
+            account: "techn4950".into(),
+            note: Some("secret-note".into()),
+            url: None,
+            group: None,
+            algorithm: "SHA1".into(),
+            digits: 6,
+            period: 30,
+            icon: None,
+            sort_order: 0,
+            created_at: "now".into(),
+            updated_at: "now".into(),
+        });
+        save_totp(&v, &data).unwrap();
+        let raw = std::fs::read(totp_path(&v)).unwrap();
+        assert!(!String::from_utf8_lossy(&raw).contains("techn4950"));
+        let loaded = load_totp(&v).unwrap();
+        assert_eq!(loaded.entries, data.entries);
         std::fs::remove_dir_all(&root).ok();
     }
 }

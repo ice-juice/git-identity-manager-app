@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>御钥师 (Git Keymaster) - UI 设计原型系统看板</title>
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    body { background: #0f172a; color: #f8fafc; padding: 40px; height: auto; min-height: 100vh; display: block; }
+    .hub-container { max-width: 1200px; margin: 0 auto; }
+    .hub-header { margin-bottom: 36px; display: flex; align-items: center; justify-content: space-between; }
+    .hub-title { display: flex; align-items: center; gap: 14px; }
+    .hub-title h1 { font-size: 24px; font-weight: 700; color: #fff; margin: 0; }
+    .hub-title .badge { background: #6366f1; color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 20px; }
+    .category-title { font-size: 15px; font-weight: 600; color: #94a3b8; margin: 28px 0 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+    .proto-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
+    .proto-card {
+      background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px;
+      text-decoration: none; color: inherit; display: flex; flex-direction: column; gap: 10px;
+      transition: all .2s ease;
+    }
+    .proto-card:hover { transform: translateY(-3px); border-color: #6366f1; box-shadow: 0 10px 25px rgba(99,102,241,.2); background: #243248; }
+    .proto-num { font-family: var(--mono); font-size: 12px; color: #818cf8; font-weight: 600; }
+    .proto-name { font-size: 16px; font-weight: 600; color: #f8fafc; }
+    .proto-desc { font-size: 12.5px; color: #94a3b8; line-height: 1.5; flex: 1; }
+    .proto-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .proto-tag { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #334155; color: #cbd5e1; }
+    .proto-tag.new { background: #065f46; color: #34d399; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="hub-container">
+    
+    <div class="hub-header">
+      <div class="hub-title">
+        <div class="logo" style="width:40px; height:40px; font-size:22px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border-radius:10px; display:flex; align-items:center; justify-content:center;">🔑</div>
+        <div>
+          <h1>御钥师 (Git Keymaster) · UI 原型看板</h1>
+          <div style="color:#94a3b8; font-size:13px; margin-top:2px;">设计系统与高保真交互式原型目录 (共 16 个页面)</div>
+        </div>
+      </div>
+      <div style="font-size:12px; color:#64748b;">本地服务端口: 5599 · 2026-09-10</div>
+    </div>
+
+    <!-- 本次新增模块 (重点展示) -->
+    <div class="category-title">
+      <span>✨</span>
+      <span>本次新增重点模块：2FA / TOTP 与隐私账号管理</span>
+      <span class="proto-tag new">NEW</span>
+    </div>
+
+    <div class="proto-grid">
+      
+      <!-- 11-2FA与TOTP管理 -->
+      <a class="proto-card" href="./html/11-2FA与TOTP管理.html" target="_blank" style="border-color:#6366f1; background:#1e1b4b;">
+        <div class="row between">
+          <span class="proto-num" style="color:#a5b4fc;">PAGE 11</span>
+          <span class="proto-tag new">★ 核心原型</span>
+        </div>
+        <div class="proto-name">⏱️ 2FA / TOTP 管理主界面</div>
+        <div class="proto-desc">集中管理两步验证密钥，默认掩码保护（点击 👁️ 小眼睛查看）、SVG 环形倒计时进度条、方块卡片/紧凑列表双布局切换与分组检索。</div>
+        <div class="proto-tags">
+          <span class="proto-tag">默认掩码+小眼睛</span>
+          <span class="proto-tag">方块/列表双布局</span>
+          <span class="proto-tag">环形倒计时</span>
+          <span class="proto-tag">免密时效</span>
+        </div>
+      </a>
+
+      <!-- 12-TOTP导入与二维码识别 -->
+      <a class="proto-card" href="./html/12-TOTP导入与二维码识别.html" target="_blank" style="border-color:#6366f1; background:#1e1b4b;">
+        <div class="row between">
+          <span class="proto-num" style="color:#a5b4fc;">PAGE 12</span>
+          <span class="proto-tag new">★ 核心原型</span>
+        </div>
+        <div class="proto-name">📷 屏幕扫码识别与二维码/密钥导出</div>
+        <div class="proto-desc">展示两大交互弹窗：一键截屏多显示器自动扫码识别入库，以及强制重认证后重新生成标准 otpauth 二维码与取回 Base32 密钥。</div>
+        <div class="proto-tags">
+          <span class="proto-tag">屏幕二维码识别</span>
+          <span class="proto-tag">重新生成二维码</span>
+          <span class="proto-tag">原始密钥取回</span>
+        </div>
+      </a>
+
+      <!-- 13-隐私账号管理 -->
+      <a class="proto-card" href="./html/13-隐私账号管理.html" target="_blank" style="border-color:#6366f1; background:#1e1b4b;">
+        <div class="row between">
+          <span class="proto-num" style="color:#a5b4fc;">PAGE 13</span>
+          <span class="proto-tag new">★ 核心原型</span>
+        </div>
+        <div class="proto-name">👤 隐私账号管理 (同平台多账号)</div>
+        <div class="proto-desc">同平台多账号智能聚合卡片，支持单卡片伸缩折叠与顶部一键全展开/全折叠、多词 AND 复合检索、关联 2FA 掩码按需查看与密码安全复制。</div>
+        <div class="proto-tags">
+          <span class="proto-tag">平台伸缩折叠</span>
+          <span class="proto-tag">一键全折叠/展开</span>
+          <span class="proto-tag">多账号聚合</span>
+          <span class="proto-tag">2FA联动掩码</span>
+        </div>
+      </a>
+        <div class="proto-name">👤 隐私账号管理 (同平台多账号)</div>
+        <div class="proto-desc">同平台多账号智能聚合卡片（如 GitHub 下 3 个账号）、多词 AND 复合检索、免密复制用户名、二次验证复制密码、联动 2FA。</div>
+        <div class="proto-tags">
+          <span class="proto-tag">多账号聚合</span>
+          <span class="proto-tag">多词搜索</span>
+          <span class="proto-tag">2FA联动</span>
+          <span class="proto-tag">排序策略</span>
+        </div>
+      </a>
+
+      <!-- 14-账号密码详情与历史版本 -->
+      <a class="proto-card" href="./html/14-账号密码详情与历史版本.html" target="_blank" style="border-color:#6366f1; background:#1e1b4b;">
+        <div class="row between">
+          <span class="proto-num" style="color:#a5b4fc;">PAGE 14</span>
+          <span class="proto-tag new">★ 核心原型</span>
+        </div>
+        <div class="proto-name">🕒 账号详情与密码历史版本抽屉</div>
+        <div class="proto-desc">账号全量信息编辑、低调展开的密码历史版本时间线列表、旧密码二次验证查看、一键安全回滚以及审计日志追踪。</div>
+        <div class="proto-tags">
+          <span class="proto-tag">低调次级入口</span>
+          <span class="proto-tag">密码历史版本</span>
+          <span class="proto-tag">一键回滚</span>
+        </div>
+      </a>
+
+      <!-- 15-安全与免密查看设置 -->
+      <a class="proto-card" href="./html/15-安全与免密查看设置.html" target="_blank" style="border-color:#6366f1; background:#1e1b4b;">
+        <div class="row between">
+          <span class="proto-num" style="color:#a5b4fc;">PAGE 15</span>
+          <span class="proto-tag new">★ 核心原型</span>
+        </div>
+        <div class="proto-name">🛡️ 安全设置与免密查看时效配置</div>
+        <div class="proto-desc">Reveal Grace 查看免密时效设置（0/1/5/15/30分钟）、剪贴板自动清空时效（20秒）、历史版本保留上限配置与网络代理。</div>
+        <div class="proto-tags">
+          <span class="proto-tag">Reveal Grace</span>
+          <span class="proto-tag">剪贴板保护</span>
+          <span class="proto-tag">网络代理</span>
+        </div>
+      </a>
+
+      <!-- 16-图标选择与自定义上传裁剪 -->
+      <a class="proto-card" href="./html/16-图标选择与自定义上传裁剪.html" target="_blank" style="border-color:#6366f1; background:#1e1b4b;">
+        <div class="row between">
+          <span class="proto-num" style="color:#a5b4fc;">PAGE 16</span>
+          <span class="proto-tag new">★ 核心原型</span>
+        </div>
+        <div class="proto-name">🎨 自定义图标选择与自动裁剪压缩</div>
+        <div class="proto-desc">内置 30+ 款主流平台图标库（零存储开销）、本地自定义图片上传、自动居中 1:1 正方形裁剪、Lanczos 128x128 缩放与极致无损高压缩（3KB级）。</div>
+        <div class="proto-tags">
+          <span class="proto-tag">内置图标库</span>
+          <span class="proto-tag">自动居中裁剪</span>
+          <span class="proto-tag">极致无损压缩</span>
+          <span class="proto-tag">内容哈希去重</span>
+        </div>
+      </a>
+
+    </div>
+
+    <!-- 既有 Git 资产管理模块 -->
+    <div class="category-title">
+      <span>🔑</span>
+      <span>现有 Git 资产管理与系统基础模块</span>
+    </div>
+
+    <div class="proto-grid">
+      <a class="proto-card" href="./html/01-初始化向导.html" target="_blank">
+        <span class="proto-num">PAGE 01</span>
+        <div class="proto-name">🚀 初始化向导</div>
+        <div class="proto-desc">新用户初次配置工作空间、访问密码与生成 24 词恢复密钥。</div>
+      </a>
+
+      <a class="proto-card" href="./html/02-解锁.html" target="_blank">
+        <span class="proto-num">PAGE 02</span>
+        <div class="proto-name">🔓 保险库解锁</div>
+        <div class="proto-desc">主密码解锁、限速防爆破、恢复密钥兜底找回。</div>
+      </a>
+
+      <a class="proto-card" href="./html/03-身份总览.html" target="_blank">
+        <span class="proto-num">PAGE 03</span>
+        <div class="proto-name">▣ 身份总览</div>
+        <div class="proto-desc">多 Git 身份状态卡片、SSH 密钥/配置/Agent/连通性四状态灯。</div>
+      </a>
+
+      <a class="proto-card" href="./html/04-新建身份向导.html" target="_blank">
+        <span class="proto-num">PAGE 04</span>
+        <div class="proto-name">＋ 新建身份向导</div>
+        <div class="proto-desc">平台选择、密钥绑定/生成、Host 别名与 Owner 归属匹配。</div>
+      </a>
+
+      <a class="proto-card" href="./html/05-密钥管理.html" target="_blank">
+        <span class="proto-num">PAGE 05</span>
+        <div class="proto-name">🔐 密钥管理</div>
+        <div class="proto-desc">所有 SSH 私钥加密副本、指纹、二次验证查看明文。</div>
+      </a>
+
+      <a class="proto-card" href="./html/06-SSH配置.html" target="_blank">
+        <span class="proto-num">PAGE 06</span>
+        <div class="proto-name">⚙ SSH 配置托管</div>
+        <div class="proto-desc">工作空间 config 正本与 ~/.ssh/config 托管区块安全合并。</div>
+      </a>
+
+      <a class="proto-card" href="./html/07-Agent管理.html" target="_blank">
+        <span class="proto-num">PAGE 07</span>
+        <div class="proto-name">◈ SSH-Agent 管理</div>
+        <div class="proto-desc">Windows OpenSSH 认证服务状态、一键注入与私钥按需加载。</div>
+      </a>
+
+      <a class="proto-card" href="./html/08-仓库与地址识别.html" target="_blank">
+        <span class="proto-num">PAGE 08</span>
+        <div class="proto-name">◨ 仓库与智能克隆识别</div>
+        <div class="proto-desc">粘贴仓库 URL 自动识别应使用的身份、转换别名并克隆。</div>
+      </a>
+
+      <a class="proto-card" href="./html/09-设置.html" target="_blank">
+        <span class="proto-num">PAGE 09</span>
+        <div class="proto-name">⚙ 基础设置</div>
+        <div class="proto-desc">安全锁定时长、PAT 配置、工具链扫描与脱敏审计日志。</div>
+      </a>
+
+      <a class="proto-card" href="./html/10-云同步与恢复.html" target="_blank">
+        <span class="proto-num">PAGE 10</span>
+        <div class="proto-name">☁ 云同步与加密备份</div>
+        <div class="proto-desc">S3/R2 端到端加密同步、换机恢复向导与快照管理。</div>
+      </a>
+    </div>
+
+  </div>
+</body>
+</html>

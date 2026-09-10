@@ -1,45 +1,36 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { prefersReducedMotion } from "../lib/prefs";
+import { createPortal } from "react-dom";
+import type { UnlockAnimStyle } from "../lib/prefs";
 import "./UnlockAnimation.css";
 
 interface Props {
-  /** 动画结束（或被跳过）时调用，用于卸载 overlay、露出主界面。 */
+  style?: UnlockAnimStyle;
   onDone: () => void;
 }
 
-// 三把钥匙悬挂点的横坐标（SVG 局部坐标，viewBox 0 0 400 260）
-const KEY_SLOT_X = [132, 156, 180];
-const KEY_SLOT_Y = 116;
-// 门锁孔坐标
-const LOCK_X = 326;
-const LOCK_Y = 152;
+/** 赛博/经典模式钥匙槽位（相对 .ua-stage 宽高的百分比） */
+const KEY_SLOT = [
+  { x: 39.6, y: 38 },
+  { x: 44.6, y: 38 },
+  { x: 49.6, y: 38 },
+];
+const LOCK = { x: 71.8, y: 54 };
 
-// 时间轴（毫秒）
-const FADE_AT = 1950; // 开始整层淡出
-const DONE_AT = 2380; // 通知父级卸载
-const HARD_TIMEOUT = 2800; // 兜底：任何异常都不阻塞进入主界面
-
-/**
- * 解锁开门过场动画：吉祥猫从三把钥匙里随机抽一把，飞向门锁孔旋转开门，
- * 门开后整层淡出，露出背后已挂载的主界面（揭幕式）。
- *
- * 性能：无第三方库，纯内联 SVG + CSS 关键帧（仅 transform/opacity/filter），
- * 结束即卸载；支持点击/Esc 跳过与 prefers-reduced-motion。
- */
-export function UnlockAnimation({ onDone }: Props) {
-  // 一次性随机抽签（惰性初始化，避免重渲染改变结果）
+export function UnlockAnimation({ style = "cyber", onDone }: Props) {
   const [chosen] = useState(() => Math.floor(Math.random() * 3));
-  const [done, setDone] = useState(false);
+  const [phase, setPhase] = useState<"play" | "reveal">("play");
   const finished = useRef(false);
   const skipRef = useRef<() => void>(() => {});
 
-  useEffect(() => {
-    // 系统减少动效：直接结束
-    if (prefersReducedMotion()) {
-      onDone();
-      return;
-    }
+  // 极简极速模式耗时更短（约 1.3s），其他模式约 2.4s
+  const isMinimal = style === "minimal";
+  const revealAt = isMinimal ? 1150 : 2100;
+  const doneAt = isMinimal ? 1480 : 2520;
+  const hardTimeout = isMinimal ? 2000 : 3200;
 
+  useEffect(() => {
+    finished.current = false;
+    setPhase("play");
     const timers: ReturnType<typeof setTimeout>[] = [];
     const complete = () => {
       if (finished.current) return;
@@ -47,144 +38,295 @@ export function UnlockAnimation({ onDone }: Props) {
       onDone();
     };
 
-    timers.push(setTimeout(() => setDone(true), FADE_AT));
-    timers.push(setTimeout(complete, DONE_AT));
-    timers.push(setTimeout(complete, HARD_TIMEOUT));
+    timers.push(setTimeout(() => setPhase("reveal"), revealAt));
+    timers.push(setTimeout(complete, doneAt));
+    timers.push(setTimeout(complete, hardTimeout));
+
+    let skipArmed = false;
+    timers.push(
+      setTimeout(() => {
+        skipArmed = true;
+      }, isMinimal ? 200 : 350),
+    );
 
     const skip = () => {
-      setDone(true);
-      // 让淡出有一帧过渡再卸载
-      timers.push(setTimeout(complete, 320));
+      if (!skipArmed) return;
+      setPhase("reveal");
+      timers.push(setTimeout(complete, 200));
     };
     skipRef.current = skip;
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" || e.key === "Enter") skip();
+      if (e.key === "Escape" || e.key === "Enter" || e.key === " ") skip();
     };
     window.addEventListener("keydown", onKey);
-
     return () => {
       timers.forEach(clearTimeout);
       window.removeEventListener("keydown", onKey);
     };
-    // onDone 为 zustand 稳定引用，仅需在挂载时启动一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [style]);
 
-  const slotX = KEY_SLOT_X[chosen];
-  const chosenStyle = {
-    // 从抽中钥匙的悬挂点飞到锁孔的位移
-    ["--ua-tx" as string]: `${LOCK_X - slotX}px`,
-    ["--ua-ty" as string]: `${LOCK_Y - KEY_SLOT_Y}px`,
-  } as CSSProperties;
-
-  return (
+  return createPortal(
     <div
-      className={"ua-overlay" + (done ? " ua-done" : "")}
+      className={`ua-overlay ua-theme--${style} ${phase === "reveal" ? "ua-reveal" : ""}`}
       role="presentation"
       aria-hidden="true"
       onClick={() => skipRef.current()}
+      style={{ position: "fixed", inset: 0, zIndex: 9999 }}
     >
-      <svg className="ua-scene" viewBox="0 0 400 260" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="uaGold" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#fffbeb" />
-            <stop offset="35%" stopColor="#fde047" />
-            <stop offset="75%" stopColor="#f59e0b" />
-            <stop offset="100%" stopColor="#b45309" />
-          </linearGradient>
-          <linearGradient id="uaCat" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#a5b4fc" />
-            <stop offset="55%" stopColor="#6366f1" />
-            <stop offset="100%" stopColor="#4338ca" />
-          </linearGradient>
-          <linearGradient id="uaDoor" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#312e81" />
-            <stop offset="100%" stopColor="#1e1b4b" />
-          </linearGradient>
-          <radialGradient id="uaLight" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#fef9c3" stopOpacity="0.95" />
-            <stop offset="55%" stopColor="#fde047" stopOpacity="0.55" />
-            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id="uaKeyGlow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#fde047" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#fde047" stopOpacity="0" />
-          </radialGradient>
-        </defs>
+      {style === "cyber" && (
+        <CyberScene chosen={chosen} />
+      )}
 
-        {/* ==== 门（右侧） ==== */}
-        <g>
-          {/* 门框 + 门内光 */}
-          <rect x="276" y="40" width="104" height="188" rx="12" fill="#0b1024" stroke="#3730a3" strokeWidth="2" />
-          <ellipse className="ua-doorlight" cx="322" cy="134" rx="52" ry="96" fill="url(#uaLight)" />
-          {/* 门扇（以右侧为轴开启） */}
-          <g className="ua-door-panel">
-            <rect x="282" y="46" width="92" height="176" rx="9" fill="url(#uaDoor)" stroke="#4f46e5" strokeWidth="2" />
-            <rect x="292" y="58" width="72" height="70" rx="6" fill="none" stroke="#6366f1" strokeWidth="1.5" opacity="0.6" />
-            <rect x="292" y="140" width="72" height="70" rx="6" fill="none" stroke="#6366f1" strokeWidth="1.5" opacity="0.6" />
-            {/* 锁孔 + 点亮 */}
-            <circle className="ua-lock-glow" cx={LOCK_X} cy={LOCK_Y} r="16" fill="url(#uaKeyGlow)" />
-            <circle cx={LOCK_X} cy={LOCK_Y} r="9" fill="#0b1024" stroke="#fde047" strokeWidth="1.5" />
-            <rect x={LOCK_X - 2} y={LOCK_Y} width="4" height="12" rx="2" fill="#0b1024" stroke="#fde047" strokeWidth="1" />
-            {/* 门把手 */}
-            <circle cx="296" cy="140" r="4" fill="#fde047" />
-          </g>
-        </g>
+      {style === "classic" && (
+        <ClassicScene chosen={chosen} />
+      )}
 
-        {/* ==== 吉祥猫（左侧，握着钥匙环） ==== */}
-        <g className="ua-cat">
-          {/* 头 */}
-          <path
-            d="M40 96 C30 52 50 42 62 48 C76 56 84 72 92 76 C100 72 108 56 122 48 C134 42 154 52 144 96 C162 116 164 142 154 162 C142 180 118 188 92 188 C66 188 42 180 30 162 C20 142 22 116 40 96 Z"
-            fill="url(#uaCat)"
-            stroke="#e0e7ff"
-            strokeWidth="2.5"
-          />
-          {/* 内耳 */}
-          <path d="M54 62 C49 66 46 76 48 85 C53 79 61 67 54 62 Z" fill="#f472b6" opacity="0.85" />
-          <path d="M130 62 C135 66 138 76 136 85 C131 79 123 67 130 62 Z" fill="#f472b6" opacity="0.85" />
-          {/* 眼睛 */}
-          <ellipse cx="72" cy="118" rx="6" ry="8" fill="#38bdf8" />
-          <circle cx="70" cy="115" r="2.2" fill="#fff" />
-          <ellipse cx="112" cy="118" rx="6" ry="8" fill="#38bdf8" />
-          <circle cx="110" cy="115" r="2.2" fill="#fff" />
-          {/* 鼻 + 嘴 */}
-          <polygon points="92,128 89,132 95,132" fill="#f472b6" />
-          <path d="M89 134 Q92 137 95 134" fill="none" stroke="#c7d2fe" strokeWidth="1.4" strokeLinecap="round" />
-          {/* 触手抓环 */}
-          <path d="M120 168 C136 176 150 172 156 160 C150 178 134 190 120 182 Z" fill="url(#uaCat)" stroke="#e0e7ff" strokeWidth="2" />
-        </g>
+      {style === "minimal" && (
+        <MinimalScene />
+      )}
 
-        {/* ==== 钥匙环 + 三把钥匙 ==== */}
-        <g>
-          <circle cx="156" cy="112" r="16" fill="none" stroke="url(#uaGold)" strokeWidth="5" />
-          {[0, 1, 2].map((i) => {
+      <div className="ua-wipe" />
+      <div className="ua-streaks" />
+      <div className="ua-hint">点击任意处跳过 · ESC</div>
+    </div>,
+    document.body,
+  );
+}
+
+/** 风格一：赛博全息鉴权 */
+function CyberScene({ chosen }: { chosen: number }) {
+  return (
+    <>
+      <div className="ua-bg">
+        <div className="ua-grid" />
+        <div className="ua-scan" />
+        <div className="ua-vignette" />
+      </div>
+
+      <div className="ua-hud-frame" />
+      <div className="ua-hud-line ua-hud-line-l" />
+      <div className="ua-hud-line ua-hud-line-r" />
+
+      <div className="ua-stage">
+        <div className="ua-cat-wrap">
+          <svg className="ua-cat-art" viewBox="0 0 180 200" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="uaHolo" x1="0%" y1="0%" x2="30%" y2="100%">
+                <stop offset="0%" stopColor="#67e8f9" />
+                <stop offset="55%" stopColor="#818cf8" />
+                <stop offset="100%" stopColor="#22d3ee" />
+              </linearGradient>
+            </defs>
+            <g className="ua-cat">
+              <path
+                d="M28 78 C20 32 42 22 56 30 C70 40 78 56 86 60 C94 56 102 40 116 30 C130 22 152 32 144 78 C164 98 166 126 154 148 C140 168 114 176 86 176 C58 176 32 168 18 148 C6 126 8 98 28 78 Z"
+                fill="rgba(34,211,238,0.08)"
+                stroke="url(#uaHolo)"
+                strokeWidth="2.4"
+              />
+              <path d="M42 44 C36 48 34 60 36 70 C42 62 52 50 42 44 Z" fill="none" stroke="#67e8f9" strokeWidth="1.4" />
+              <path d="M130 44 C136 48 138 60 136 70 C130 62 120 50 130 44 Z" fill="none" stroke="#67e8f9" strokeWidth="1.4" />
+              <ellipse cx="66" cy="100" rx="6" ry="8" fill="#22d3ee" />
+              <ellipse cx="106" cy="100" rx="6" ry="8" fill="#22d3ee" />
+              <path d="M82 120 Q86 125 90 120" fill="none" stroke="#a5f3fc" strokeWidth="1.5" />
+              <path d="M118 152 C136 160 150 154 156 140" fill="none" stroke="url(#uaHolo)" strokeWidth="2" />
+            </g>
+          </svg>
+          <div className="ua-cat-scan" />
+        </div>
+
+        <div className="ua-keyring" aria-hidden="true">
+          <span className="ua-orbit" />
+          {KEY_SLOT.map((slot, i) => {
             const isChosen = i === chosen;
-            const x = KEY_SLOT_X[i];
+            const style = {
+              left: `${slot.x}%`,
+              top: `${slot.y}%`,
+              ["--ua-dx" as string]: String(LOCK.x - slot.x),
+              ["--ua-dy" as string]: String(LOCK.y - slot.y),
+            } as CSSProperties;
             return (
-              <g
+              <span
                 key={i}
-                className={isChosen ? "ua-key--chosen" : "ua-key--dim"}
-                style={isChosen ? chosenStyle : undefined}
-                transform={`translate(${x - 156}, 0)`}
+                className={"ua-key" + (isChosen ? " ua-key--chosen" : " ua-key--dim")}
+                style={style}
               >
-                {isChosen && (
-                  <circle className="ua-glow" cx="156" cy={KEY_SLOT_Y + 18} r="26" fill="url(#uaKeyGlow)" />
-                )}
-                {/* 钥匙：环-柄-齿 */}
-                <circle cx="156" cy={KEY_SLOT_Y} r="9" fill="url(#uaGold)" />
-                <circle cx="156" cy={KEY_SLOT_Y} r="4" fill="#1e1b4b" />
-                <rect x="152.5" y={KEY_SLOT_Y + 8} width="7" height="40" rx="3" fill="url(#uaGold)" />
-                <rect x="159" y={KEY_SLOT_Y + 40} width="9" height="5" rx="2" fill="url(#uaGold)" />
-                <rect x="159" y={KEY_SLOT_Y + 30} width="7" height="5" rx="2" fill="url(#uaGold)" />
-              </g>
+                {isChosen && <span className="ua-reticle" />}
+                <svg className="ua-key-art" viewBox="0 0 28 56" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id={`uaKey${i}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#ecfeff" />
+                      <stop offset="45%" stopColor="#22d3ee" />
+                      <stop offset="100%" stopColor="#6366f1" />
+                    </linearGradient>
+                  </defs>
+                  <circle cx="14" cy="10" r="8.5" fill="none" stroke={`url(#uaKey${i})`} strokeWidth="2.4" />
+                  <circle cx="14" cy="10" r="3.2" fill="none" stroke="#67e8f9" strokeWidth="1.4" />
+                  <rect x="11.4" y="17" width="5.2" height="28" rx="1.6" fill={`url(#uaKey${i})`} />
+                  <rect x="16.4" y="36" width="8" height="3.6" rx="1" fill={`url(#uaKey${i})`} />
+                  <rect x="16.4" y="29" width="6.2" height="3.6" rx="1" fill={`url(#uaKey${i})`} />
+                </svg>
+              </span>
             );
           })}
-        </g>
-      </svg>
+        </div>
 
-      <div className="ua-hint">点击任意处跳过</div>
+        <div className="ua-door">
+          <div className="ua-vault-ring" />
+          <div className="ua-vault-ring ua-vault-ring-2" />
+          <div className="ua-jamb">
+            <div className="ua-interior" />
+            <div className="ua-leaf">
+              <span className="ua-pane ua-pane-t" />
+              <span className="ua-pane ua-pane-b" />
+              <span className="ua-lock-glow" />
+              <span className="ua-keyhole" />
+              <span className="ua-knob" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="ua-status">
+        <span className="ua-status-k">SYS</span>
+        <span className="ua-status-t">AUTHENTICATING</span>
+        <span className="ua-status-ok">ACCESS GRANTED</span>
+      </div>
+    </>
+  );
+}
+
+/** 风格二：经典温情金匙 */
+function ClassicScene({ chosen }: { chosen: number }) {
+  return (
+    <>
+      <div className="ua-bg">
+        <div className="ua-warm-glow" />
+      </div>
+
+      <div className="ua-stage ua-stage--classic">
+        <svg className="ua-cat-art ua-cat-art--warm" viewBox="0 0 180 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="uaCatWarm" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#c7d2fe" />
+              <stop offset="50%" stopColor="#6366f1" />
+              <stop offset="100%" stopColor="#4338ca" />
+            </linearGradient>
+          </defs>
+          <g className="ua-cat">
+            <path
+              d="M28 78 C20 32 42 22 56 30 C70 40 78 56 86 60 C94 56 102 40 116 30 C130 22 152 32 144 78 C164 98 166 126 154 148 C140 168 114 176 86 176 C58 176 32 168 18 148 C6 126 8 98 28 78 Z"
+              fill="url(#uaCatWarm)"
+              stroke="#e0e7ff"
+              strokeWidth="2.5"
+            />
+            <path d="M42 44 C36 48 34 60 36 70 C42 62 52 50 42 44 Z" fill="#f472b6" opacity="0.9" />
+            <path d="M130 44 C136 48 138 60 136 70 C130 62 120 50 130 44 Z" fill="#f472b6" opacity="0.9" />
+            <ellipse cx="66" cy="100" rx="6" ry="8" fill="#38bdf8" />
+            <circle cx="64" cy="97" r="2.2" fill="#fff" />
+            <ellipse cx="106" cy="100" rx="6" ry="8" fill="#38bdf8" />
+            <circle cx="104" cy="97" r="2.2" fill="#fff" />
+            <polygon points="86,118 83,123 89,123" fill="#f472b6" />
+            <path d="M82 126 Q86 130 90 126" fill="none" stroke="#c7d2fe" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M118 152 C136 160 150 154 156 140 C150 172 132 184 116 174 Z" fill="url(#uaCatWarm)" stroke="#e0e7ff" strokeWidth="2" />
+          </g>
+        </svg>
+
+        <div className="ua-keyring" aria-hidden="true">
+          <span className="ua-orbit ua-orbit--gold" />
+          {KEY_SLOT.map((slot, i) => {
+            const isChosen = i === chosen;
+            const style = {
+              left: `${slot.x}%`,
+              top: `${slot.y}%`,
+              ["--ua-dx" as string]: String(LOCK.x - slot.x),
+              ["--ua-dy" as string]: String(LOCK.y - slot.y),
+            } as CSSProperties;
+            return (
+              <span
+                key={i}
+                className={"ua-key" + (isChosen ? " ua-key--chosen ua-key--gold" : " ua-key--dim")}
+                style={style}
+              >
+                {isChosen && <span className="ua-key-glow--gold" />}
+                <svg className="ua-key-art" viewBox="0 0 28 56" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id={`uaGoldKey${i}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#fffbeb" />
+                      <stop offset="35%" stopColor="#fde047" />
+                      <stop offset="75%" stopColor="#f59e0b" />
+                      <stop offset="100%" stopColor="#b45309" />
+                    </linearGradient>
+                  </defs>
+                  <circle cx="14" cy="10" r="9" fill={`url(#uaGoldKey${i})`} />
+                  <circle cx="14" cy="10" r="4" fill="#1e1b4b" />
+                  <rect x="10.5" y="17" width="7" height="30" rx="3" fill={`url(#uaGoldKey${i})`} />
+                  <rect x="17.5" y="38" width="9" height="5" rx="2" fill={`url(#uaGoldKey${i})`} />
+                  <rect x="17.5" y="28" width="7" height="5" rx="2" fill={`url(#uaGoldKey${i})`} />
+                </svg>
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="ua-door ua-door--classic">
+          <div className="ua-jamb ua-jamb--classic">
+            <div className="ua-interior ua-interior--warm" />
+            <div className="ua-leaf ua-leaf--classic">
+              <span className="ua-pane ua-pane-t" />
+              <span className="ua-pane ua-pane-b" />
+              <span className="ua-lock-glow ua-lock-glow--gold" />
+              <span className="ua-keyhole ua-keyhole--gold" />
+              <span className="ua-knob ua-knob--gold" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** 风格三：极客量子极速流 */
+function MinimalScene() {
+  const codeLines = [
+    "0x7F4B9A10  INIT_VAULT_SESSION",
+    "DECRYPTING  AES-256-GCM / ARGON2ID",
+    "VERIFYING   SSH_KEY_CREDENTIALS",
+    "IDENTITY    MATCHED [MASTER_KEY]",
+    "STATUS      200 OK -> GRANTED",
+  ];
+
+  return (
+    <div className="ua-minimal-wrap">
+      <div className="ua-minimal-matrix">
+        {codeLines.map((line, idx) => (
+          <div key={idx} className="ua-matrix-line" style={{ animationDelay: `${idx * 0.08}s` }}>
+            {line}
+          </div>
+        ))}
+      </div>
+
+      <div className="ua-minimal-core">
+        <div className="ua-core-ring ua-core-ring-1" />
+        <div className="ua-core-ring ua-core-ring-2" />
+        <div className="ua-core-ring ua-core-ring-3" />
+        <div className="ua-quantum-key">
+          <svg viewBox="0 0 36 36" width="36" height="36">
+            <circle cx="18" cy="18" r="8" fill="none" stroke="#22d3ee" strokeWidth="2.5" />
+            <path d="M18 10 L18 2" stroke="#22d3ee" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M18 26 L18 34" stroke="#22d3ee" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M10 18 L2 18" stroke="#22d3ee" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M26 18 L34 18" stroke="#22d3ee" strokeWidth="2.5" strokeLinecap="round" />
+          </svg>
+        </div>
+      </div>
+
+      <div className="ua-minimal-status">
+        <span className="ua-minimal-badge">KEYMASTER</span>
+        <span className="ua-minimal-title">VAULT UNLOCKED</span>
+      </div>
     </div>
   );
 }

@@ -20,6 +20,34 @@ fn default_true() -> bool {
     true
 }
 
+fn default_reveal_grace_minutes() -> u32 {
+    5
+}
+
+fn default_clipboard_clear_seconds() -> u32 {
+    20
+}
+
+fn default_account_history_limit() -> u32 {
+    10
+}
+
+pub fn clamp_reveal_grace_minutes(minutes: u32) -> u32 {
+    minutes.min(30)
+}
+
+pub fn clamp_clipboard_clear_seconds(seconds: u32) -> u32 {
+    if seconds == 0 {
+        0
+    } else {
+        seconds.clamp(5, 120)
+    }
+}
+
+pub fn clamp_account_history_limit(n: u32) -> u32 {
+    n.clamp(1, 50)
+}
+
 /// 0 表示关闭；其余夹到 5–1440 分钟。
 pub fn clamp_auto_sync_minutes(minutes: u32) -> u32 {
     if minutes == 0 {
@@ -77,6 +105,15 @@ pub struct AppConfig {
     /// 本机网络代理（访问 GitHub / GitLab / 更新源等）。None 表示未配置。
     #[serde(default)]
     pub network_proxy: Option<NetworkProxy>,
+    /// 查看 OTP/密码的免密时效（分钟）。0 = 每次都验。
+    #[serde(default = "default_reveal_grace_minutes")]
+    pub reveal_grace_minutes: u32,
+    /// 复制机密后清空剪贴板的秒数。0 = 不清空。
+    #[serde(default = "default_clipboard_clear_seconds")]
+    pub clipboard_clear_seconds: u32,
+    /// 每个账号保留的密码历史条数。
+    #[serde(default = "default_account_history_limit")]
+    pub account_history_limit: u32,
 }
 
 /// 本机 HTTP/HTTPS/SOCKS5 代理。
@@ -191,6 +228,9 @@ impl Default for AppConfig {
             skipped_update_version: None,
             last_update_check_at: None,
             network_proxy: None,
+            reveal_grace_minutes: default_reveal_grace_minutes(),
+            clipboard_clear_seconds: default_clipboard_clear_seconds(),
+            account_history_limit: default_account_history_limit(),
         }
     }
 }

@@ -10,6 +10,8 @@ import {
   Cloud,
   Settings as SettingsIcon,
   Lock,
+  Timer,
+  UserRound,
 } from "lucide-react";
 import { api } from "../lib/ipc";
 import { useApp } from "../store";
@@ -51,6 +53,8 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: "/agent", label: "Agent", icon: Cpu },
     { to: "/repos", label: "仓库管理", icon: FolderGit2, badge: repoCount },
     { to: "/clone", label: "克隆仓库", icon: Download },
+    { to: "/totp", label: "2FA / TOTP", icon: Timer },
+    { to: "/accounts", label: "隐私账号", icon: UserRound },
     { to: "/sync", label: "云端同步", icon: Cloud },
   ];
 

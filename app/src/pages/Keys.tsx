@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, Eye, KeyRound, X } from "lucide-react";
 import { api, errMessage, type KeyRecord, type ScannedKey } from "../lib/ipc";
+import { writeClipboard } from "../lib/clipboard";
 import { PageHead, Card, Empty, Badge } from "../ui/common";
 import { useApp } from "../store";
 
 type Copied = "" | "pub" | "priv" | "pass";
 
-async function writeClipboard(text: string) {
-  await navigator.clipboard.writeText(text.replace(/\r\n/g, "\n").trim() + "\n");
+async function copyKeyText(text: string) {
+  await writeClipboard(text.replace(/\r\n/g, "\n").trim() + "\n");
 }
 
 export function Keys() {
@@ -80,7 +81,7 @@ export function Keys() {
 
   async function copyPublic(k: KeyRecord) {
     if (!k.publicOpenssh.trim()) return;
-    await writeClipboard(k.publicOpenssh);
+    await copyKeyText(k.publicOpenssh);
     setCopiedId(k.id);
     window.setTimeout(() => setCopiedId((id) => (id === k.id ? "" : id)), 1600);
   }
@@ -243,7 +244,7 @@ function KeyViewDialog({ record, onClose }: { record: KeyRecord; onClose: () => 
 
   async function copy(which: Copied, text: string) {
     if (!text.trim()) return;
-    await writeClipboard(text);
+    await copyKeyText(text);
     markCopied(which);
   }
 
@@ -270,7 +271,7 @@ function KeyViewDialog({ record, onClose }: { record: KeyRecord; onClose: () => 
   }
 
   return (
-    <div className="wizard-overlay" style={{ zIndex: 60 }} onMouseDown={(e) => e.target === e.currentTarget && close()}>
+    <div className="wizard-overlay" style={{ zIndex: 60 }}>
       <div className="card" style={{ width: 560, maxWidth: "96%", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div className="card-head">
           <div className="row" style={{ gap: 6 }}>

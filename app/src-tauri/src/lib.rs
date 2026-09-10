@@ -7,8 +7,10 @@ pub mod commands;
 pub mod session;
 pub mod error;
 pub mod git;
+pub mod icons;
 pub mod importer;
 pub mod model;
+pub mod qrscan;
 pub mod net;
 pub mod platform;
 pub mod single_instance;
@@ -16,6 +18,7 @@ pub mod ssh;
 pub mod store;
 pub mod sync;
 pub mod sys;
+pub mod totp;
 pub mod tray;
 pub mod update;
 pub mod util;
@@ -107,6 +110,7 @@ pub fn run() {
             commands::sync::import_s3_config,
             commands::sync::test_cloud_sync_config,
             commands::sync::get_cloud_sync_status,
+            commands::sync::get_cloud_sync_page,
             commands::sync::cloud_sync_push,
             commands::sync::cloud_sync_pull,
             commands::sync::get_auto_sync_settings,
@@ -130,6 +134,37 @@ pub fn run() {
             commands::proxy::get_network_proxy,
             commands::proxy::save_network_proxy,
             commands::proxy::test_network_proxy,
+            commands::totp::totp_list,
+            commands::totp::totp_add,
+            commands::totp::totp_update,
+            commands::totp::totp_delete,
+            commands::totp::totp_save_groups,
+            commands::totp::totp_generate_code,
+            commands::totp::totp_parse_uri,
+            commands::totp::totp_import_from_image,
+            commands::totp::totp_scan_screen,
+            commands::totp::totp_reveal_secret,
+            commands::totp::totp_export_qr,
+            commands::accounts::account_list,
+            commands::accounts::account_add,
+            commands::accounts::account_update,
+            commands::accounts::account_delete,
+            commands::accounts::account_save_groups,
+            commands::accounts::account_reveal_password,
+            commands::accounts::account_touch,
+            commands::accounts::account_history_list,
+            commands::accounts::account_reveal_history,
+            commands::accounts::account_rollback_history,
+            commands::accounts::account_clear_history,
+            commands::secrets_ui::clipboard_write,
+            commands::secrets_ui::clipboard_clear,
+            commands::secrets_ui::get_reveal_settings,
+            commands::secrets_ui::set_reveal_grace_minutes,
+            commands::secrets_ui::set_clipboard_clear_seconds,
+            commands::secrets_ui::set_account_history_limit,
+            commands::secrets_ui::icon_list_builtin,
+            commands::secrets_ui::icon_upload_custom,
+            commands::secrets_ui::icon_get_custom,
         ])
         .setup(|app| {
             tray::install(app.handle())?;

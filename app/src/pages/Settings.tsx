@@ -12,10 +12,13 @@ import {
   RefreshCw,
   Cloud,
   FileCog,
+  Play,
 } from "lucide-react";
 import { api, errMessage, type NetworkProxy, type ProxyTestResult, type UpdateCheckResult, type UpdateSource } from "../lib/ipc";
+import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 import { THEME_OPTIONS } from "../lib/theme";
+import { UNLOCK_ANIM_STYLES } from "../lib/prefs";
 import { PageHead, Card, FieldLabel, Badge } from "../ui/common";
 
 function closeActionLabel(action: "tray" | "quit" | null | undefined): string {
@@ -828,13 +831,26 @@ type SettingsTab = "general" | "security" | "workspace" | "about" | "danger";
 
 export function Settings() {
   const navigate = useNavigate();
-  const { status, refresh, theme, setTheme, unlockAnimEnabled, setUnlockAnimEnabled } = useApp();
+  const {
+    status,
+    refresh,
+    theme,
+    setTheme,
+    unlockAnimEnabled,
+    setUnlockAnimEnabled,
+    unlockAnimStyle,
+    setUnlockAnimStyle,
+    startUnlockAnim,
+  } = useApp();
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
 
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [newPw2, setNewPw2] = useState("");
   const [graceDays, setGraceDays] = useState(String(status?.graceDays ?? 0));
+  const [revealGrace, setRevealGrace] = useState("5");
+  const [clipSec, setClipSec] = useState("20");
+  const [histLimit, setHistLimit] = useState("10");
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -843,6 +859,14 @@ export function Settings() {
   useEffect(() => {
     setGraceDays(String(status?.graceDays ?? 0));
   }, [status?.graceDays]);
+
+  useEffect(() => {
+    api.getRevealSettings().then((s) => {
+      setRevealGrace(String(s.revealGraceMinutes));
+      setClipSec(String(s.clipboardClearSeconds));
+      setHistLimit(String(s.accountHistoryLimit));
+    }).catch(() => {});
+  }, []);
 
   async function changePassword() {
     setErr("");
@@ -996,10 +1020,10 @@ export function Settings() {
                     <div>
                       <FieldLabel
                         name="解锁过场动画"
-                        tip="每次手动输入访问密码/恢复密钥解锁成功后，播放吉祥猫随机抽取一把钥匙开门的过场动画。免验证静默解锁不会触发。"
+                        tip="每次手动输入访问密码/恢复密钥解锁成功后播放开门过场动画。免验证静默解锁不会触发。"
                       />
                       <div className="hint">
-                        关闭后解锁将直接进入主界面。系统开启「减少动态效果」时会自动跳过；播放中可点击任意处或按 Esc 跳过。
+                        关闭后解锁将直接进入主界面。播放中可点击任意处或按 Esc / 空格 / 回车跳过。
                       </div>
                     </div>
                     <button
@@ -1008,6 +1032,85 @@ export function Settings() {
                       onClick={() => setUnlockAnimEnabled(!unlockAnimEnabled)}
                     />
                   </div>
+
+                  {unlockAnimEnabled && (
+                    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span className="hint" style={{ fontWeight: 600, color: "var(--text-1)" }}>
+                          选择动画风格
+                        </span>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          onClick={() => startUnlockAnim(unlockAnimStyle)}
+                          title="预览当前选中的动画风格"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                        >
+                          <Play size={13} /> 预览当前动画
+                        </button>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+                          gap: 10,
+                        }}
+                      >
+                        {UNLOCK_ANIM_STYLES.map((st) => {
+                          const active = unlockAnimStyle === st.id;
+                          return (
+                            <div
+                              key={st.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setUnlockAnimStyle(st.id)}
+                              style={{
+                                padding: "12px 14px",
+                                borderRadius: "var(--radius, 10px)",
+                                border: active
+                                  ? "1.5px solid var(--accent, #6366f1)"
+                                  : "1px solid var(--border, rgba(255, 255, 255, 0.08))",
+                                background: active
+                                  ? "var(--accent-dim, rgba(99, 102, 241, 0.08))"
+                                  : "var(--bg-card, rgba(255, 255, 255, 0.02))",
+                                cursor: "pointer",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 6,
+                                transition: "all 0.15s ease",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <span style={{ fontSize: 18 }}>{st.icon}</span>
+                                  <span style={{ fontWeight: 600, fontSize: 13, color: active ? "var(--accent)" : "var(--text-1)" }}>
+                                    {st.label}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn ghost sm"
+                                  style={{ padding: "2px 8px", fontSize: 11, height: 24 }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setUnlockAnimStyle(st.id);
+                                    startUnlockAnim(st.id);
+                                  }}
+                                  title={`试看${st.label}`}
+                                >
+                                  试看
+                                </button>
+                              </div>
+                              <div style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.4 }}>
+                                {st.desc}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </Card>
 
@@ -1109,6 +1212,85 @@ export function Settings() {
                 </div>
               </Card>
 
+              <Card title="查看 OTP / 密码的免密时效">
+                <div className="stack">
+                  <div className="muted">独立于开机免验证。锁定或退出后立即失效。取回 TOTP 原始密钥仍每次都要密码。</div>
+                  <div className="field">
+                    <FieldLabel name="免密查看时效" tip="首次验证后，在该时间内再看验证码或账号密码不用重复输入。0 表示每次都验。" />
+                    <div className="row" style={{ marginTop: 4 }}>
+                      <select className="input" style={{ width: 160 }} value={revealGrace} onChange={(e) => setRevealGrace(e.target.value)}>
+                        <option value="0">每次都验证</option>
+                        <option value="1">1 分钟</option>
+                        <option value="5">5 分钟（推荐）</option>
+                        <option value="15">15 分钟</option>
+                        <option value="30">30 分钟</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn primary sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            await api.setRevealGraceMinutes(Number(revealGrace));
+                            setMsg("已保存免密查看时效");
+                          } catch (e) {
+                            setErr(errMessage(e));
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label className="field-label">复制后清空剪贴板</label>
+                    <div className="row">
+                      <select className="input" style={{ width: 140 }} value={clipSec} onChange={(e) => setClipSec(e.target.value)}>
+                        <option value="0">不清空</option>
+                        <option value="10">10 秒</option>
+                        <option value="20">20 秒</option>
+                        <option value="60">60 秒</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          await api.setClipboardClearSeconds(Number(clipSec));
+                          setMsg("已保存剪贴板清空时间");
+                        }}
+                      >
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label className="field-label">密码历史保留条数</label>
+                    <div className="row">
+                      <select className="input" style={{ width: 120 }} value={histLimit} onChange={(e) => setHistLimit(e.target.value)}>
+                        <option value="5">5 条</option>
+                        <option value="10">10 条</option>
+                        <option value="20">20 条</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          await api.setAccountHistoryLimit(Number(histLimit));
+                          setMsg("已保存历史条数上限");
+                        }}
+                      >
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
               <Card title="修改主访问密码">
                 <div className="stack" style={{ maxWidth: 420 }}>
                   <div className="field">
@@ -1139,7 +1321,7 @@ export function Settings() {
                       <div className="callout danger">⚠️ 仅显示一次，请立即保存：</div>
                       <div className="reckey">{newRecovery}</div>
                       <div className="row">
-                        <button className="btn sm" onClick={() => navigator.clipboard.writeText(newRecovery)}>
+                        <button className="btn sm" onClick={() => writeClipboard(newRecovery)}>
                           复制
                         </button>
                         <button className="btn ghost sm" onClick={() => setNewRecovery("")}>

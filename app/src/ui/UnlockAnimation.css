@@ -1,4 +1,10 @@
-/* 解锁开门过场动画 —— 全程仅使用 transform / opacity / filter，走 GPU 合成层，不触发重排。 */
+/* =========================================================================
+   御钥师 - 解锁进场动画样式系统
+   包含 3 种不同风格：
+   1. cyber   - 赛博全息鉴权（科技网格、HUD、全息激光猫、高能能量钥、气密门）
+   2. classic - 经典温情金匙（深紫暖夜、吉祥实态猫、三把金钥匙、旋轴金门、暖金圣光）
+   3. minimal - 极客量子极速流（极速~1.3s、终端矩阵代码流、量子三同心环、瞬间穿透爆破）
+   ========================================================================= */
 
 .ua-overlay {
   position: fixed;
@@ -7,150 +13,711 @@
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 38%, #10152e 0%, #070a16 55%, #04060d 100%);
   cursor: pointer;
-  will-change: opacity;
+  user-select: none;
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
 }
 
-/* 结束：整层淡出，露出背后已挂载的主界面（揭幕式） */
-.ua-overlay.ua-done {
-  animation: ua-fade 0.4s ease forwards;
-}
-@keyframes ua-fade {
-  to {
-    opacity: 0;
-    visibility: hidden;
-  }
-}
-
-.ua-scene {
-  width: min(560px, 82vw);
-  height: auto;
-  display: block;
-  filter: drop-shadow(0 10px 40px rgba(79, 70, 229, 0.35));
-}
-
-.ua-hint {
+/* ---------------- 基础背景与 HUD ---------------- */
+.ua-bg {
   position: absolute;
-  bottom: 26px;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 赛博风格色彩 */
+.ua-theme--cyber {
+  background: #02040a;
+  color: #a5f3fc;
+}
+
+/* 经典风格色彩 */
+.ua-theme--classic {
+  background: #0b0c16;
+  color: #fef08a;
+}
+
+/* 极客极简色彩 */
+.ua-theme--minimal {
+  background: #05070c;
+  color: #38bdf8;
+}
+
+/* 赛博网格与扫描线 */
+.ua-grid {
+  position: absolute;
+  inset: -20%;
+  background:
+    linear-gradient(rgba(34, 211, 238, 0.07) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, rgba(34, 211, 238, 0.07) 1px, transparent 1px) 0 0 / 48px 48px,
+    radial-gradient(ellipse at 50% 120%, rgba(34, 211, 238, 0.16), transparent 55%);
+  transform: perspective(700px) rotateX(58deg) translateY(18%);
+  animation: ua-grid-drift 8s linear infinite;
+}
+@keyframes ua-grid-drift {
+  to { background-position: 0 48px, 48px 0, 0 0; }
+}
+
+.ua-scan {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.03) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: overlay;
+  animation: ua-scan-move 3.2s linear infinite;
+}
+@keyframes ua-scan-move {
+  to { transform: translateY(3px); }
+}
+
+.ua-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 45%, transparent 38%, #02040a 82%);
+}
+
+/* 经典模式暖光背景 */
+.ua-warm-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 68% 50%, rgba(245, 158, 11, 0.12) 0%, transparent 45%),
+    radial-gradient(circle at 35% 55%, rgba(99, 102, 241, 0.16) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, transparent 40%, #06070f 85%);
+}
+
+/* HUD 边框与刻度 */
+.ua-hud-frame {
+  position: absolute;
+  inset: 28px;
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  box-shadow: inset 0 0 40px rgba(34, 211, 238, 0.04);
+  pointer-events: none;
+  animation: ua-boot 0.45s ease both;
+}
+.ua-hud-frame::before,
+.ua-hud-frame::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #22d3ee;
+}
+.ua-hud-frame::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.ua-hud-frame::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+.ua-hud-line {
+  position: absolute;
+  top: 18%;
+  width: 72px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #22d3ee, transparent);
+  opacity: 0.45;
+  pointer-events: none;
+}
+.ua-hud-line-l { left: 36px; }
+.ua-hud-line-r { right: 36px; }
+@keyframes ua-boot {
+  from { opacity: 0; transform: scale(1.04); }
+}
+
+/* ---------------- 舞台通用结构 ---------------- */
+.ua-stage {
+  position: relative;
+  width: min(760px, 90vw);
+  height: min(360px, 54vh);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  transform-origin: 72% 50%;
+  overflow: visible;
+  z-index: 2;
+}
+
+/* 经典模式舞台轻微柔和 */
+.ua-stage--classic {
+  filter: drop-shadow(0 20px 30px rgba(0, 0, 0, 0.5));
+}
+
+/* ---------------- 猫猫角色 ---------------- */
+.ua-cat-wrap {
+  position: relative;
+  z-index: 2;
+  margin-right: -8px;
+}
+.ua-cat-art {
+  width: min(176px, 26vw);
+  height: auto;
+  filter: drop-shadow(0 0 16px rgba(34, 211, 238, 0.45));
+  animation: ua-holo-in 0.55s ease both;
+}
+.ua-cat-art--warm {
+  width: min(176px, 26vw);
+  height: auto;
+  filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.5));
+  animation: ua-holo-in 0.55s ease both;
+  margin-right: -8px;
+  z-index: 2;
+}
+.ua-cat {
+  transform-box: fill-box;
+  transform-origin: 70% 80%;
+  animation: ua-cat-lean 1.1s ease-in-out 0.35s both;
+}
+.ua-cat-scan {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: 2px;
+  top: 10%;
+  background: linear-gradient(90deg, transparent, #67e8f9, transparent);
+  box-shadow: 0 0 12px #22d3ee;
+  animation: ua-cat-scan 1.1s ease-in-out 0.1s both;
+}
+@keyframes ua-holo-in {
+  from { opacity: 0; filter: drop-shadow(0 0 0 transparent) blur(8px); transform: translateY(8px); }
+}
+@keyframes ua-cat-lean {
+  0% { transform: rotate(0) translateX(0); }
+  45% { transform: rotate(5deg) translateX(8px); }
+  100% { transform: rotate(1deg) translateX(2px); }
+}
+@keyframes ua-cat-scan {
+  0% { top: 12%; opacity: 0; }
+  20% { opacity: 1; }
+  100% { top: 86%; opacity: 0; }
+}
+
+/* ---------------- 钥匙环与钥匙飞行 ---------------- */
+.ua-keyring {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  container-type: size;
+}
+.ua-orbit {
+  position: absolute;
+  left: 44.6%;
+  top: 36%;
+  width: 78px;
+  height: 78px;
+  margin: -39px 0 0 -39px;
+  border: 1.5px dashed rgba(103, 232, 249, 0.55);
+  border-radius: 50%;
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.2);
+  animation: ua-orbit-spin 4s linear infinite, ua-orbit-out 0.4s ease 0.72s both;
+}
+.ua-orbit--gold {
+  border-color: rgba(251, 191, 36, 0.65);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+}
+@keyframes ua-orbit-spin { to { transform: rotate(360deg); } }
+@keyframes ua-orbit-out { to { opacity: 0; transform: scale(0.7); } }
+
+.ua-key {
+  position: absolute;
+  width: 28px;
+  height: 56px;
+  margin: -8px 0 0 -14px;
+}
+.ua-key-art {
+  position: relative;
+  z-index: 1;
+  width: 28px;
+  height: 56px;
+  display: block;
+  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.55));
+}
+.ua-key--gold .ua-key-art {
+  filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.7));
+}
+
+.ua-reticle {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border: 1px solid #67e8f9;
+  border-radius: 50%;
+  animation: ua-reticle 0.45s ease-out both;
+}
+.ua-reticle::before,
+.ua-reticle::after {
+  content: "";
+  position: absolute;
+  background: #67e8f9;
+}
+.ua-reticle::before { left: 50%; top: -4px; width: 1px; height: calc(100% + 8px); }
+.ua-reticle::after { top: 50%; left: -4px; height: 1px; width: calc(100% + 8px); }
+@keyframes ua-reticle {
+  from { opacity: 0; transform: scale(1.6); }
+  to { opacity: 0.9; transform: scale(1); }
+}
+
+.ua-key-glow--gold {
+  position: absolute;
+  left: 50%;
+  top: 25%;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  background: radial-gradient(circle, rgba(251, 191, 36, 0.8), transparent 70%);
+  animation: ua-gold-pulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes ua-gold-pulse {
+  from { transform: scale(0.85); opacity: 0.6; }
+  to { transform: scale(1.25); opacity: 1; }
+}
+
+.ua-key--chosen {
+  animation:
+    ua-key-lock 0.42s ease-out both,
+    ua-key-fly 0.5s cubic-bezier(0.22, 0.7, 0.2, 1) 0.52s both,
+    ua-key-turn 0.32s ease-in-out 1.02s both,
+    ua-key-hide 0.2s ease 1.62s both;
+}
+@keyframes ua-key-lock {
+  0% { transform: scale(1); filter: brightness(1); }
+  55% { transform: scale(1.28); filter: brightness(1.55); }
+  100% { transform: scale(1.12); }
+}
+@keyframes ua-key-fly {
+  from { transform: translate(0, 0) scale(1.12) rotate(0deg); }
+  to { transform: translate(calc(var(--ua-dx, 27) * 1cqw), calc(var(--ua-dy, 16) * 1cqh)) scale(0.78) rotate(90deg); }
+}
+@keyframes ua-key-turn {
+  from { transform: translate(calc(var(--ua-dx, 27) * 1cqw), calc(var(--ua-dy, 16) * 1cqh)) scale(0.78) rotate(90deg); }
+  to { transform: translate(calc(var(--ua-dx, 27) * 1cqw), calc(var(--ua-dy, 16) * 1cqh)) scale(0.78) rotate(165deg); }
+}
+@keyframes ua-key-hide { to { opacity: 0; } }
+
+.ua-key--dim {
+  animation: ua-key-dim 0.4s ease 0.28s both;
+}
+@keyframes ua-key-dim {
+  to { opacity: 0.14; transform: scale(0.78); filter: blur(1px); }
+}
+
+/* ---------------- 门与旋转开门（赛博 vs 经典） ---------------- */
+.ua-door {
+  position: relative;
+  width: min(168px, 26vw);
+  height: min(248px, 66%);
+  flex: 0 0 auto;
+  z-index: 3;
+  perspective: 980px;
+}
+.ua-vault-ring {
+  position: absolute;
+  inset: -16px;
+  border: 1.5px solid rgba(34, 211, 238, 0.28);
+  border-radius: 22px;
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.12);
+  pointer-events: none;
+  animation: ua-ring-spin 10s linear infinite;
+}
+.ua-vault-ring-2 {
+  inset: -8px;
+  border-style: dashed;
+  border-color: rgba(129, 140, 248, 0.45);
+  animation-duration: 6s;
+  animation-direction: reverse;
+}
+@keyframes ua-ring-spin { to { transform: rotate(360deg); } }
+
+.ua-jamb {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  background: #061018;
+  border: 1.5px solid rgba(34, 211, 238, 0.45);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.12),
+    0 0 28px rgba(34, 211, 238, 0.12),
+    inset 0 0 24px rgba(34, 211, 238, 0.06);
+  transform-style: preserve-3d;
+  overflow: hidden;
+}
+
+/* 经典实木金边框大门 */
+.ua-jamb--classic {
+  background: #181124;
+  border: 2px solid #b45309;
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.3),
+    0 0 35px rgba(245, 158, 11, 0.2),
+    inset 0 0 30px rgba(0, 0, 0, 0.6);
+}
+
+.ua-interior {
+  position: absolute;
+  inset: 8px;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(165, 243, 252, 0.95) 0%, rgba(34, 211, 238, 0.55) 32%, rgba(99, 102, 241, 0.7) 100%);
+  opacity: 0;
+  transform: scaleX(0.18);
+  transform-origin: 100% 50%;
+  animation: ua-interior-on 0.55s cubic-bezier(0.22, 1, 0.36, 1) 1.32s both;
+}
+.ua-interior--warm {
+  background:
+    radial-gradient(circle at 50% 45%, #fffbeb 0%, #fde047 30%, #f59e0b 65%, #d97706 100%);
+  box-shadow: 0 0 50px rgba(251, 191, 36, 0.85);
+}
+@keyframes ua-interior-on {
+  to { opacity: 1; transform: scaleX(1); }
+}
+
+.ua-leaf {
+  position: absolute;
+  inset: 7px;
+  border-radius: 11px;
+  background:
+    linear-gradient(180deg, rgba(14, 23, 42, 0.2), transparent 12%, transparent 88%, rgba(14, 23, 42, 0.2)),
+    linear-gradient(90deg, #0b1224, #152033);
+  border: 1.5px solid rgba(103, 232, 249, 0.45);
+  transform-origin: right center;
+  transform-style: preserve-3d;
+  box-shadow: inset 0 0 18px rgba(34, 211, 238, 0.12);
+  animation: ua-door-open 0.7s cubic-bezier(0.45, 0, 0.2, 1) 1.38s both;
+}
+.ua-leaf--classic {
+  background:
+    linear-gradient(180deg, rgba(67, 24, 8, 0.3), transparent 15%, transparent 85%, rgba(67, 24, 8, 0.3)),
+    linear-gradient(90deg, #241432, #381e4b);
+  border: 1.5px solid #d97706;
+  box-shadow: inset 0 0 24px rgba(245, 158, 11, 0.25);
+}
+
+@keyframes ua-door-open {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(-112deg); }
+}
+
+.ua-pane {
+  position: absolute;
+  left: 12%;
+  right: 18%;
+  border: 1px solid rgba(103, 232, 249, 0.35);
+  border-radius: 6px;
+  box-shadow: inset 0 0 12px rgba(34, 211, 238, 0.08);
+}
+.ua-leaf--classic .ua-pane {
+  border-color: rgba(245, 158, 11, 0.35);
+  box-shadow: inset 0 0 12px rgba(245, 158, 11, 0.1);
+}
+.ua-pane-t { top: 10%; height: 32%; }
+.ua-pane-b { bottom: 10%; height: 32%; }
+
+.ua-lock-glow {
+  position: absolute;
+  left: 54%;
+  top: 52%;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(74, 222, 128, 0.85), transparent 70%);
+  opacity: 0;
+  animation: ua-lock-on 0.4s ease 1.12s both;
+}
+.ua-lock-glow--gold {
+  background: radial-gradient(circle, #fde047, rgba(245, 158, 11, 0.8), transparent 75%);
+}
+@keyframes ua-lock-on { to { opacity: 1; } }
+
+.ua-keyhole {
+  position: absolute;
+  left: 54%;
+  top: 52%;
+  width: 12px;
+  height: 20px;
+  margin: -6px 0 0 -6px;
+  background:
+    radial-gradient(circle at 50% 28%, #02040a 0 4px, transparent 4.2px),
+    linear-gradient(#02040a, #02040a);
+  background-size: 100% 100%, 4px 11px;
+  background-position: center top, center 8px;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 0 1.4px #67e8f9, 0 0 10px rgba(34, 211, 238, 0.55);
+  border-radius: 8px;
+}
+.ua-keyhole--gold {
+  box-shadow: 0 0 0 1.4px #fde047, 0 0 12px rgba(245, 158, 11, 0.7);
+}
+
+.ua-knob {
+  position: absolute;
+  left: 14%;
+  top: 52%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #67e8f9;
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.8);
+}
+.ua-knob--gold {
+  background: #fde047;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.9);
+}
+
+/* 赛博状态指示文本 */
+.ua-status {
+  position: absolute;
+  bottom: 72px;
   left: 0;
   right: 0;
   text-align: center;
-  font-size: 12px;
-  letter-spacing: 0.5px;
-  color: rgba(226, 232, 255, 0.55);
-  animation: ua-hint-in 0.6s ease 1.2s both;
+  letter-spacing: 0.28em;
+  font-size: 11px;
   pointer-events: none;
+  z-index: 3;
+}
+.ua-status-k {
+  margin-right: 10px;
+  color: #67e8f9;
+  opacity: 0.7;
+}
+.ua-status-t {
+  color: #67e8f9;
+  animation: ua-blink 0.7s steps(1) infinite;
+}
+.ua-status-ok {
+  display: none;
+  color: #4ade80;
+  text-shadow: 0 0 12px rgba(74, 222, 128, 0.7);
+}
+.ua-overlay.ua-reveal .ua-status-t { display: none; }
+.ua-overlay.ua-reveal .ua-status-ok { display: inline; }
+@keyframes ua-blink {
+  50% { opacity: 0.25; }
+}
+
+/* ---------------- 风格三：极客量子流布局与动画 ---------------- */
+.ua-minimal-wrap {
+  position: relative;
+  width: min(680px, 92vw);
+  height: min(340px, 50vh);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.ua-minimal-matrix {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  opacity: 0.35;
+  pointer-events: none;
+  font-size: 11.5px;
+  letter-spacing: 0.15em;
+  color: #38bdf8;
+  mask-image: radial-gradient(ellipse at center, transparent 35%, black 85%);
+  -webkit-mask-image: radial-gradient(ellipse at center, transparent 35%, black 85%);
+}
+.ua-matrix-line {
+  white-space: nowrap;
+  animation: ua-matrix-stream 0.5s ease-out both;
+}
+@keyframes ua-matrix-stream {
+  from { opacity: 0; transform: translateX(-15px); }
+  to { opacity: 0.7; transform: translateX(0); }
+}
+
+.ua-minimal-core {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  display: grid;
+  place-items: center;
+}
+
+.ua-core-ring {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.ua-core-ring-1 {
+  inset: 0;
+  border: 1.5px dashed #38bdf8;
+  box-shadow: 0 0 24px rgba(56, 189, 248, 0.25);
+  animation: ua-ring-spin 3s linear infinite;
+}
+.ua-core-ring-2 {
+  inset: 16px;
+  border: 1.5px solid rgba(129, 140, 248, 0.5);
+  border-top-color: #a855f7;
+  border-bottom-color: #22d3ee;
+  animation: ua-ring-spin 2s linear infinite reverse;
+}
+.ua-core-ring-3 {
+  inset: 32px;
+  border: 1.5px dotted #67e8f9;
+  animation: ua-ring-spin 5s linear infinite;
+}
+
+.ua-quantum-key {
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 0 14px #38bdf8);
+  animation: ua-quantum-in 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes ua-quantum-in {
+  0% { transform: scale(2.8) rotate(-90deg); opacity: 0; filter: blur(6px) drop-shadow(0 0 30px #38bdf8); }
+  50% { transform: scale(1.15) rotate(15deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+.ua-minimal-status {
+  margin-top: 32px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  letter-spacing: 0.3em;
+  font-size: 12px;
+  animation: ua-boot 0.3s ease both;
+}
+.ua-minimal-badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+  font-weight: 700;
+  font-size: 10px;
+}
+.ua-minimal-title {
+  color: #4ade80;
+  text-shadow: 0 0 10px rgba(74, 222, 128, 0.5);
+}
+
+/* ---------------- 揭幕破晓快切特效（各主题差异） ---------------- */
+.ua-wipe {
+  position: absolute;
+  inset: -30%;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.12);
+  transform-origin: 72% 48%;
+}
+
+.ua-theme--cyber .ua-wipe {
+  background: radial-gradient(
+    circle at 72% 48%,
+    rgba(165, 243, 252, 0.95) 0%,
+    rgba(34, 211, 238, 0.45) 16%,
+    rgba(99, 102, 241, 0.18) 32%,
+    transparent 54%
+  );
+}
+
+.ua-theme--classic .ua-wipe {
+  background: radial-gradient(
+    circle at 72% 48%,
+    #fffbeb 0%,
+    rgba(253, 224, 71, 0.85) 18%,
+    rgba(245, 158, 11, 0.4) 34%,
+    transparent 58%
+  );
+}
+
+.ua-theme--minimal .ua-wipe {
+  transform-origin: 50% 50%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    #ffffff 0%,
+    rgba(56, 189, 248, 0.8) 20%,
+    rgba(99, 102, 241, 0.3) 40%,
+    transparent 60%
+  );
+}
+
+.ua-streaks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    100deg,
+    transparent 0 46px,
+    rgba(165, 243, 252, 0.08) 46px 48px
+  );
+  opacity: 0;
+}
+.ua-theme--classic .ua-streaks {
+  background: repeating-linear-gradient(
+    100deg,
+    transparent 0 46px,
+    rgba(251, 191, 36, 0.09) 46px 48px
+  );
+}
+
+.ua-overlay.ua-reveal .ua-wipe {
+  animation: ua-wipe-burst 0.4s cubic-bezier(0.16, 0.84, 0.3, 1) forwards;
+}
+.ua-overlay.ua-reveal .ua-streaks {
+  animation: ua-streak 0.36s ease-out forwards;
+}
+.ua-overlay.ua-reveal .ua-stage,
+.ua-overlay.ua-reveal .ua-minimal-wrap {
+  animation: ua-stage-zoom 0.4s ease-in forwards;
+}
+.ua-overlay.ua-reveal {
+  animation: ua-out 0.36s ease-in 0.08s forwards;
+}
+
+@keyframes ua-wipe-burst {
+  0% { opacity: 0; transform: scale(0.12); }
+  35% { opacity: 1; }
+  100% { opacity: 1; transform: scale(4.6); }
+}
+@keyframes ua-streak {
+  from { opacity: 0; transform: translateX(-8%); }
+  to { opacity: 0.8; transform: translateX(12%); }
+}
+@keyframes ua-stage-zoom {
+  to { transform: scale(1.14); filter: brightness(1.55) saturate(1.15); }
+}
+@keyframes ua-out {
+  to { opacity: 0; visibility: hidden; }
+}
+
+/* 底部跳过提示 */
+.ua-hint {
+  position: absolute;
+  bottom: 28px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: rgba(165, 243, 252, 0.4);
+  animation: ua-hint-in 0.5s ease 0.9s both;
+  pointer-events: none;
+}
+.ua-theme--classic .ua-hint {
+  color: rgba(254, 240, 138, 0.4);
+}
+.ua-theme--minimal .ua-hint {
+  color: rgba(56, 189, 248, 0.4);
 }
 @keyframes ua-hint-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-
-/* ① 抽签：中签钥匙脉冲放大 + 发光 */
-.ua-key--chosen {
-  transform-box: fill-box;
-  transform-origin: 50% 0%;
-  animation:
-    ua-key-pulse 0.5s ease-out both,
-    ua-key-travel 0.55s cubic-bezier(0.5, 0, 0.4, 1) 0.5s both,
-    ua-key-turn 0.35s ease-in-out 1.05s both;
-}
-@keyframes ua-key-pulse {
-  0% { transform: scale(1); }
-  55% { transform: scale(1.35); }
-  100% { transform: scale(1.18); }
-}
-/* ② 取钥并飞向门锁孔（位移量由组件按抽中的钥匙注入 CSS 变量，落点精准对准锁孔） */
-@keyframes ua-key-travel {
-  from { transform: translate(0, 0) scale(1.18) rotate(0deg); }
-  to { transform: translate(var(--ua-tx, 174px), var(--ua-ty, 34px)) scale(0.9) rotate(90deg); }
-}
-/* ③ 插锁旋转 */
-@keyframes ua-key-turn {
-  from { transform: translate(var(--ua-tx, 174px), var(--ua-ty, 34px)) scale(0.9) rotate(90deg); }
-  to { transform: translate(var(--ua-tx, 174px), var(--ua-ty, 34px)) scale(0.9) rotate(158deg); }
-}
-
-/* 未中签的钥匙：淡出缩小 */
-.ua-key--dim {
-  transform-box: fill-box;
-  transform-origin: 50% 0%;
-  animation: ua-key-dim 0.5s ease-out 0.3s both;
-}
-@keyframes ua-key-dim {
-  to { opacity: 0.12; transform: scale(0.8); }
-}
-
-/* 中签钥匙的光晕 */
-.ua-glow {
-  transform-box: fill-box;
-  transform-origin: center;
-  opacity: 0;
-  animation: ua-glow-in 0.6s ease-out 0.05s both;
-}
-@keyframes ua-glow-in {
-  0% { opacity: 0; transform: scale(0.4); }
-  60% { opacity: 0.9; transform: scale(1.15); }
-  100% { opacity: 0.35; transform: scale(1); }
-}
-
-/* 锁芯在钥匙旋转时点亮 */
-.ua-lock-glow {
-  transform-box: fill-box;
-  transform-origin: center;
-  opacity: 0;
-  animation: ua-lock-glow 0.5s ease-out 1.15s both;
-}
-@keyframes ua-lock-glow {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
-}
-
-/* ④ 开门：以门轴（右侧）为中心旋开 */
-.ua-door-panel {
-  transform-box: fill-box;
-  transform-origin: 100% 50%;
-  animation: ua-door-open 0.7s cubic-bezier(0.45, 0, 0.2, 1) 1.35s both;
-}
-@keyframes ua-door-open {
-  from { transform: perspective(900px) rotateY(0deg); }
-  to { transform: perspective(900px) rotateY(-115deg); }
-}
-
-/* 门内溢出的光 */
-.ua-doorlight {
-  transform-box: fill-box;
-  transform-origin: center;
-  opacity: 0;
-  animation: ua-doorlight 0.85s ease-out 1.5s both;
-}
-@keyframes ua-doorlight {
-  0% { opacity: 0; transform: scaleX(0.2); }
-  100% { opacity: 1; transform: scaleX(1); }
-}
-
-/* 吉祥猫轻微前倾配合取钥 */
-.ua-cat {
-  transform-box: fill-box;
-  transform-origin: 60% 80%;
-  animation: ua-cat-lean 1.1s ease-in-out 0.4s both;
-}
-@keyframes ua-cat-lean {
-  0% { transform: rotate(0deg) translateX(0); }
-  40% { transform: rotate(4deg) translateX(6px); }
-  100% { transform: rotate(0deg) translateX(0); }
-}
-
-/* 系统「减少动态效果」时：不进行任何位移动画（组件层也会直接跳过） */
-@media (prefers-reduced-motion: reduce) {
-  .ua-key--chosen,
-  .ua-key--dim,
-  .ua-glow,
-  .ua-lock-glow,
-  .ua-door-panel,
-  .ua-doorlight,
-  .ua-cat {
-    animation: none !important;
-  }
-}
+.ua-overlay.ua-reveal .ua-hint { opacity: 0; }

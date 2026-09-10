@@ -707,9 +707,11 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
   border: 1px solid var(--border-strong); border-radius: 5px;
   padding: 5px 7px; cursor: pointer; background: var(--panel-2); text-align: left;
   font-size: 11px; color: var(--text); transition: all 0.12s ease;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 .choice.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .choice:disabled { opacity: .5; cursor: not-allowed; }
+.group-picker { display: flex; flex-direction: column; gap: 7px; }
 .grid-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px; }
 .grid-sum .muted { margin-bottom: 1px; }
 
@@ -957,4 +959,503 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
     justify-content: flex-end;
   }
 }
+
+/* ===== 2FA / TOTP 与隐私账号现代化设计系统 ===== */
+
+.security-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 11.5px;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+.security-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.security-banner-text strong {
+  color: var(--text);
+  font-weight: 650;
+}
+.security-banner-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.sec-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 99px;
+  border: 1px solid transparent;
+}
+.sec-pill.cyan {
+  background: rgba(34, 211, 238, 0.12);
+  color: #0284c7;
+  border-color: rgba(34, 211, 238, 0.3);
+}
+.sec-pill.purple {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+.view-switcher {
+  display: inline-flex;
+  background: var(--gray-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+}
+.view-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  transition: all 0.12s ease;
+}
+.view-btn:hover { color: var(--text); }
+.view-btn.on {
+  background: var(--panel);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.group-tabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.group-tab {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-soft);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 11.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  transition: all 0.12s ease;
+}
+.group-tab:hover { background: var(--gray-soft); color: var(--text); }
+.group-tab:disabled { opacity: 0.5; cursor: not-allowed; }
+.group-tab.on {
+  background: var(--sidebar, #0f172a);
+  color: #ffffff;
+  border-color: var(--sidebar, #0f172a);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
+}
+.group-tab-count {
+  font-size: 10px;
+  opacity: 0.85;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0 5px;
+  border-radius: 8px;
+  font-family: var(--mono);
+}
+.group-tab.on .group-tab-count {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+.group-tab.dashed { border-style: dashed; }
+.group-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 7px;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.45) inset;
+}
+.group-tab.on .group-tab-dot {
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.7) inset;
+}
+
+.group-dialog { width: 420px; max-width: 96vw; }
+.color-dots {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.color-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.color-dot:hover { transform: scale(1.08); }
+.color-dot.on {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+}
+.color-dot.none {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--gray-soft) 0 5px,
+    var(--panel) 5px 10px
+  );
+  border-color: var(--border-strong);
+}
+
+/* SVG 环形倒计时 */
+.countdown-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+.countdown-ring svg {
+  transform: rotate(-90deg);
+  width: 100%;
+  height: 100%;
+}
+.countdown-ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+.countdown-ring .bg-circle {
+  stroke: var(--border-strong);
+  opacity: 0.35;
+}
+.countdown-ring .val-circle {
+  transition: stroke-dashoffset 0.85s linear, stroke 0.3s ease;
+  stroke-linecap: round;
+}
+.countdown-ring .sec-num {
+  position: absolute;
+  font-size: 9.5px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--text-soft);
+}
+
+/* TOTP 方块卡片网格 */
+.totp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.totp-card {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.totp-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.totp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.totp-card-issuer {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.25;
+}
+.totp-card-account {
+  font-size: 11px;
+  color: var(--text-mute);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.totp-card-note {
+  font-size: 11px;
+  color: var(--text-mute);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.totp-code-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--gray-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  min-height: 52px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.totp-code-box.revealed {
+  cursor: pointer;
+  background: var(--panel-2);
+}
+.totp-code-box.revealed:hover {
+  border-color: var(--accent);
+}
+.totp-code {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--accent);
+  line-height: 1;
+}
+.totp-code.masked {
+  color: var(--text-mute);
+  letter-spacing: 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.totp-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* TOTP 列表形态 */
+.totp-list-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.totp-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s ease;
+}
+.totp-list-row:last-child { border-bottom: none; }
+.totp-list-row:hover { background: var(--gray-soft); }
+.totp-list-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1.2;
+  min-width: 0;
+}
+.totp-list-code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  flex: 1;
+}
+.totp-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 表单输入与示例 */
+.totp-secret-box { min-height: 68px; resize: vertical; line-height: 1.45; }
+.field-example {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--gray-soft);
+  color: var(--text-mute);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+.field-example code {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-soft);
+  word-break: break-all;
+}
+.totp-advanced {
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+/* 平台多账号聚合大卡片 */
+.platform-group {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s ease;
+}
+.platform-group:hover { border-color: var(--border-strong); }
+.platform-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px;
+  background: var(--card-head-bg);
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  transition: background 0.12s ease;
+}
+.platform-header:hover { background: var(--gray-soft); }
+.platform-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 650;
+  font-size: 14px;
+  color: var(--text);
+}
+.platform-body {
+  display: flex;
+  flex-direction: column;
+}
+.chevron {
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+  color: var(--text-mute);
+}
+.chevron.rot { transform: rotate(-90deg); }
+
+/* 子账号行 */
+.account-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  transition: background 0.12s ease;
+}
+.account-item:hover { background: var(--panel-2); }
+.account-user-info {
+  flex: 1.2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.account-user {
+  font-family: var(--mono);
+  font-weight: 650;
+  font-size: 13.5px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.account-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+.account-mid {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1.4;
+  justify-content: flex-end;
+}
+.pwd-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--gray-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.linked-totp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 8px;
+  padding: 3px 9px;
+  font-size: 11px;
+}
+.linked-totp-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+}
+
+/* 密码历史时间线 */
+.timeline {
+  position: relative;
+  padding-left: 20px;
+  margin: 10px 0;
+}
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border-strong);
+}
+.timeline-item {
+  position: relative;
+  margin-bottom: 14px;
+}
+.timeline-item:last-child { margin-bottom: 0; }
+.timeline-dot {
+  position: absolute;
+  left: -20px;
+  top: 6px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 3px solid var(--accent);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+.timeline-dot.current {
+  border-color: var(--green);
+  background: var(--green);
+}
+.timeline-content {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 

@@ -150,6 +150,7 @@ fn run_locked(state: &AppState, trigger: &str) -> Result<Option<SyncResult>> {
     } else {
         engine::pull_then_maybe_push(&vault, &client)?
     };
+    crate::commands::sync::remember_view_after_sync(&vault, &client);
     if let Ok(mut last) = state.last_periodic_sync.lock() {
         *last = Some(Instant::now());
     }
