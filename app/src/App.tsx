@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { HashRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/ipc";
 import { useApp } from "./store";
 import { Layout } from "./ui/Layout";
+import { TitleBar } from "./ui/TitleBar";
 import { InitWizard } from "./pages/Init";
 import { Unlock } from "./pages/Unlock";
 import { Overview } from "./pages/Overview";
@@ -15,7 +16,10 @@ import { Repos } from "./pages/Repos";
 import { ClonePage } from "./pages/Clone";
 import { SyncPage } from "./pages/Sync";
 import { Settings } from "./pages/Settings";
+import { TotpPage } from "./pages/Totp";
+import { AccountsPage } from "./pages/Accounts";
 import { CloseConfirmHost } from "./ui/CloseConfirm";
+import UnlockAnimation from "./ui/UnlockAnimation";
 
 function AppShell() {
   return (
@@ -26,16 +30,36 @@ function AppShell() {
 }
 
 export default function App() {
-  const { status, loading, refresh, setWritesLock } = useApp();
+  const {
+    status,
+    loading,
+    refresh,
+    setWritesLock,
+    playUnlockAnim,
+    animPreviewStyle,
+    unlockAnimStyle,
+    animPlayId,
+    endUnlockAnim,
+  } = useApp();
+
+  const unlockOverlay = playUnlockAnim ? (
+    <UnlockAnimation
+      key={animPlayId}
+      style={animPreviewStyle || unlockAnimStyle}
+      onDone={endUnlockAnim}
+    />
+  ) : null;
 
   useEffect(() => {
     (async () => {
+      // 先拉状态画出解锁/主界面，再做静默解锁，避免首屏卡在「加载中」。
+      await refresh();
       try {
-        await api.vaultTryGraceUnlock();
+        const ok = await api.vaultTryGraceUnlock();
+        if (ok) await refresh();
       } catch {
         /* 无会话或已过期，走正常解锁 */
       }
-      await refresh();
     })();
   }, [refresh]);
 
@@ -84,38 +108,19 @@ export default function App() {
     };
   }, [refresh]);
 
+  let screen: ReactNode;
   if (loading) {
-    return (
-      <>
-        <CloseConfirmHost />
-        <div className="center-stage">
-          <div className="muted">加载中…</div>
-        </div>
-      </>
+    screen = (
+      <div className="center-stage">
+        <div className="muted">加载中…</div>
+      </div>
     );
-  }
-
-  if (!status?.initialized) {
-    return (
-      <>
-        <CloseConfirmHost />
-        <InitWizard />
-      </>
-    );
-  }
-
-  if (!status.unlocked) {
-    return (
-      <>
-        <CloseConfirmHost />
-        <Unlock />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <CloseConfirmHost />
+  } else if (!status?.initialized) {
+    screen = <InitWizard />;
+  } else if (!status.unlocked) {
+    screen = <Unlock />;
+  } else {
+    screen = (
       <HashRouter>
         <Routes>
           <Route path="/identities/new" element={<NewIdentity />} />
@@ -126,12 +131,25 @@ export default function App() {
             <Route path="/agent" element={<AgentPage />} />
             <Route path="/repos" element={<Repos />} />
             <Route path="/clone" element={<ClonePage />} />
+            <Route path="/totp" element={<TotpPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/sync" element={<SyncPage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </HashRouter>
+    );
+  }
+
+  return (
+    <>
+      <CloseConfirmHost />
+      <div className="app-shell">
+        <TitleBar />
+        <div className="app-view">{screen}</div>
+      </div>
+      {unlockOverlay}
     </>
   );
 }

@@ -142,12 +142,19 @@ pub fn fetch_remote_manifest(
     s3: &S3Client,
 ) -> Result<Option<SyncManifest>> {
     let key = vault.subkey(LABEL_SYNC_OBJECT)?;
+    fetch_remote_manifest_with_key(&key, s3)
+}
+
+fn fetch_remote_manifest_with_key(
+    key: &[u8; KEY_LEN],
+    s3: &S3Client,
+) -> Result<Option<SyncManifest>> {
     let raw = match s3.get_object(MANIFEST_FILE_KEY)? {
         Some(b) => b,
         None => return Ok(None),
     };
 
-    let plain = decrypt_payload(&key, &raw)
+    let plain = decrypt_payload(key, &raw)
         .map_err(|_| AppError::Invalid("云端清单解密失败：可能使用了不同的恢复密钥或工作空间".into()))?;
 
     let manifest: SyncManifest = serde_json::from_slice(&plain)
@@ -163,6 +170,14 @@ fn fetch_remote_vault_data(
     let Some(manifest) = fetch_remote_manifest(vault, s3)? else {
         return Ok(None);
     };
+    fetch_remote_vault_data_with(s3, enc_key, &manifest)
+}
+
+fn fetch_remote_vault_data_with(
+    s3: &S3Client,
+    enc_key: &[u8; KEY_LEN],
+    manifest: &SyncManifest,
+) -> Result<Option<VaultData>> {
     let Some(entry) = manifest.objects.get("data/identities.json") else {
         return Ok(None);
     };
@@ -207,10 +222,7 @@ pub fn upload_vault_header(vault: &Vault, s3: &S3Client) -> Result<()> {
 }
 
 pub fn vault_header_exists(s3: &S3Client) -> bool {
-    s3.get_object(VAULT_HEADER_KEY)
-        .ok()
-        .flatten()
-        .is_some()
+    s3.object_exists(VAULT_HEADER_KEY)
 }
 
 pub fn fetch_vault_header(s3: &S3Client) -> Result<VaultHeader> {
@@ -328,8 +340,44 @@ pub fn restore_from_cloud(
     Ok((vault, result))
 }
 
-/// 查询云端与本地同步比对状态
+/// 仅本地资产计数，不访问云端。供页面首屏即时渲染。
+pub fn local_sync_status(vault: &Vault, configured: bool) -> Result<CloudSyncStatus> {
+    if !vault.is_unlocked() {
+        return Err(AppError::Locked);
+    }
+    let data = store::load_data(vault)?;
+    let machine_id = crate::app_config::AppConfig::current_machine_id();
+    Ok(CloudSyncStatus {
+        remote_exists: false,
+        remote_updated_at: None,
+        remote_workspace_id: None,
+        local_identity_count: data.identities.len(),
+        local_key_count: data.keys.len(),
+        local_repo_count: data
+            .repos
+            .iter()
+            .filter(|r| r.machine_id == machine_id || r.machine_id.is_empty())
+            .count(),
+        status: if configured {
+            "checking".into()
+        } else {
+            "unconfigured".into()
+        },
+        header_ready: false,
+    })
+}
+
+/// 查询云端与本地同步比对状态（含完整方向判断，可能额外下载身份密文）。
 pub fn get_sync_status(vault: &Vault, s3: &S3Client) -> Result<CloudSyncStatus> {
+    get_sync_status_inner(vault, s3, false)
+}
+
+/// 轻量查询：只拉清单 + 探测头部，不下载身份密文。适合进页后台刷新。
+pub fn get_sync_status_lite(vault: &Vault, s3: &S3Client) -> Result<CloudSyncStatus> {
+    get_sync_status_inner(vault, s3, true)
+}
+
+fn get_sync_status_inner(vault: &Vault, s3: &S3Client, lite: bool) -> Result<CloudSyncStatus> {
     if !vault.is_unlocked() {
         return Err(AppError::Locked);
     }
@@ -343,9 +391,18 @@ pub fn get_sync_status(vault: &Vault, s3: &S3Client) -> Result<CloudSyncStatus> 
         .iter()
         .filter(|r| r.machine_id == machine_id || r.machine_id.is_empty())
         .count();
+    let enc_key = vault.subkey(LABEL_SYNC_OBJECT)?;
 
-    let header_ready = vault_header_exists(s3);
-    let remote = match fetch_remote_manifest(vault, s3) {
+    // 头部探测与清单拉取并行，避免串行两次往返。
+    let (header_ready, remote) = std::thread::scope(|scope| {
+        let header_h = scope.spawn(|| vault_header_exists(s3));
+        let remote_h = scope.spawn(|| fetch_remote_manifest_with_key(&enc_key, s3));
+        let header_ready = header_h.join().unwrap_or(false);
+        let remote = remote_h.join().unwrap_or(Ok(None));
+        (header_ready, remote)
+    });
+
+    let remote = match remote {
         Ok(m) => m,
         Err(_) => {
             return Ok(CloudSyncStatus {
@@ -366,8 +423,11 @@ pub fn get_sync_status(vault: &Vault, s3: &S3Client) -> Result<CloudSyncStatus> 
         let status = if !is_same_ws {
             "different_workspace".to_string()
         } else {
-            let enc_key = vault.subkey(LABEL_SYNC_OBJECT)?;
-            let remote_data = fetch_remote_vault_data(vault, s3, &enc_key).ok().flatten();
+            let remote_data = if lite {
+                None
+            } else {
+                fetch_remote_vault_data_with(s3, &enc_key, &m).ok().flatten()
+            };
 
             if let Some(remote_data) = remote_data {
                 // 构建本地数据在“推送到云端”时产生的预期云端 VaultData 结构：
@@ -396,7 +456,7 @@ pub fn get_sync_status(vault: &Vault, s3: &S3Client) -> Result<CloudSyncStatus> 
 
                 let ssh_matched = m.objects.get("ssh/config").is_none() || local_ssh_hash == remote_ssh_hash;
 
-                if local_id_hash == remote_id_hash && ssh_matched {
+                if local_id_hash == remote_id_hash && ssh_matched && !extra_objects_diverged(vault, &m) {
                     "synced".to_string()
                 } else if is_remote_ahead(&data, &remote_data, &machine_id) {
                     "remote_ahead".to_string()
@@ -412,7 +472,7 @@ pub fn get_sync_status(vault: &Vault, s3: &S3Client) -> Result<CloudSyncStatus> 
                     .map(|e| e.sha256.as_str())
                     .unwrap_or_default();
 
-                if local_id_hash == remote_id_hash {
+                if local_id_hash == remote_id_hash && !extra_objects_diverged(vault, &m) {
                     "synced".to_string()
                 } else {
                     "local_ahead".to_string()
@@ -546,6 +606,15 @@ pub fn push_to_cloud(vault: &Vault, s3: &S3Client) -> Result<SyncResult> {
     logical_objects.insert("data/identities.json".into(), serde_json::to_vec(&upload_data)?);
     // (2) 机密口令
     logical_objects.insert("data/secrets.json".into(), serde_json::to_vec(&secrets)?);
+    let totp_data = store::load_totp(vault)?;
+    logical_objects.insert("data/totp.json".into(), serde_json::to_vec(&totp_data)?);
+    let account_data = store::load_accounts(vault)?;
+    logical_objects.insert("data/accounts.json".into(), serde_json::to_vec(&account_data)?);
+    for hash in store::list_icon_hashes(vault) {
+        if let Ok(bytes) = store::load_icon(vault, &hash) {
+            logical_objects.insert(format!("icons/{hash}.webp"), bytes);
+        }
+    }
     // (3) 所有私钥副本
     for key in &data.keys {
         if store::key_exists(vault, &key.id) {
@@ -648,6 +717,8 @@ fn pull_from_cloud_inner(
     let mut transferred_count = 0;
     let mut remote_data_snap: Option<VaultData> = None;
     let mut remote_secrets_snap: Option<Secrets> = None;
+    let mut remote_totp_snap: Option<crate::model::TotpData> = None;
+    let mut remote_account_snap: Option<crate::model::AccountData> = None;
     let mut remote_ssh_snap: Option<String> = None;
     let mut pulled_key_ids: Vec<String> = Vec::new();
 
@@ -672,6 +743,21 @@ fn pull_from_cloud_inner(
             let remote_secrets: Secrets = serde_json::from_slice(&plain)
                 .map_err(|e| AppError::Invalid(format!("解析云端口令数据失败: {e}")))?;
             remote_secrets_snap = Some(remote_secrets);
+        } else if logical_path == "data/totp.json" {
+            remote_totp_snap = Some(
+                serde_json::from_slice(&plain)
+                    .map_err(|e| AppError::Invalid(format!("解析云端 TOTP 数据失败: {e}")))?,
+            );
+        } else if logical_path == "data/accounts.json" {
+            remote_account_snap = Some(
+                serde_json::from_slice(&plain)
+                    .map_err(|e| AppError::Invalid(format!("解析云端账号数据失败: {e}")))?,
+            );
+        } else if let Some(hash) = logical_path
+            .strip_prefix("icons/")
+            .and_then(|s| s.strip_suffix(".webp"))
+        {
+            store::save_icon(vault, hash, &plain)?;
         } else if logical_path == "ssh/config" {
             remote_ssh_snap = Some(String::from_utf8_lossy(&plain).to_string());
         } else if let Some(key_id) = logical_path.strip_prefix("keys/").and_then(|s| s.strip_suffix(".key")) {
@@ -693,14 +779,32 @@ fn pull_from_cloud_inner(
     crate::model::keep_repos_for_machine(&mut current_data, &machine_id);
     crate::sys::portableize_vault_data(&mut current_data);
     let mut current_secrets = store::load_secrets(vault)?;
+    let local_totp = store::load_totp(vault).unwrap_or_default();
+    let local_acc = store::load_accounts(vault).unwrap_or_default();
     if let Some(remote_secrets) = &remote_secrets_snap {
-        for (k, v) in remote_secrets.key_passphrases.clone() {
-            current_secrets.key_passphrases.entry(k).or_insert(v);
-        }
-        if current_secrets.github_pat.is_none() {
-            current_secrets.github_pat = remote_secrets.github_pat.clone();
-        }
+        current_secrets = crate::model::merge_secrets_with_meta(
+            current_secrets,
+            remote_secrets,
+            Some(&local_totp),
+            remote_totp_snap.as_ref(),
+            Some(&local_acc),
+            remote_account_snap.as_ref(),
+        );
     }
+    let merged_totp = if let Some(remote_totp) = remote_totp_snap.clone() {
+        crate::model::merge_totp_data(local_totp.clone(), remote_totp)
+    } else {
+        local_totp.clone()
+    };
+    let merged_acc = if let Some(remote_acc) = remote_account_snap.clone() {
+        crate::model::merge_account_data(local_acc.clone(), remote_acc)
+    } else {
+        local_acc.clone()
+    };
+    // 先落机密再落条目，避免列表已可见但种子还在旧 secrets.enc 上。
+    store::save_secrets(vault, &current_secrets)?;
+    store::save_totp(vault, &merged_totp)?;
+    store::save_accounts(vault, &merged_acc)?;
     for key_id in &pulled_key_ids {
         if let (Some(key_rec), Ok(raw)) = (
             current_data.keys.iter().find(|k| k.id == *key_id),
@@ -722,19 +826,20 @@ fn pull_from_cloud_inner(
     }
 
     store::save_data(vault, &current_data)?;
-    store::save_secrets(vault, &current_secrets)?;
     let ssh_now = read_ssh_config_bytes(vault).unwrap_or_default();
     let remote_hash = match remote_data_snap {
         Some(rd) => Some(stable_state_hash(
             &rd,
             remote_secrets_snap.as_ref().unwrap_or(&Secrets::default()),
             remote_ssh_snap.as_deref().unwrap_or(""),
+            remote_totp_snap.as_ref().unwrap_or(&crate::model::TotpData::default()),
+            remote_account_snap.as_ref().unwrap_or(&crate::model::AccountData::default()),
         )),
         None => None,
     };
     let need_push = match remote_hash {
-        Some(h) => h != stable_state_hash(&current_data, &current_secrets, &ssh_now),
-        None => !current_data.identities.is_empty() || !current_data.keys.is_empty(),
+        Some(h) => h != stable_state_hash(&current_data, &current_secrets, &ssh_now, &merged_totp, &merged_acc),
+        None => local_has_syncable_assets(vault)?,
     };
 
     Ok((
@@ -798,6 +903,12 @@ struct SnapshotPayload {
     pub secrets: Secrets,
     pub private_keys: HashMap<String, String>,
     pub ssh_config: Option<String>,
+    #[serde(default)]
+    pub totp_data: crate::model::TotpData,
+    #[serde(default)]
+    pub account_data: crate::model::AccountData,
+    #[serde(default)]
+    pub icons: HashMap<String, String>,
 }
 
 fn load_snapshot_index(vault: &Vault, s3: &S3Client) -> Result<SnapshotIndex> {
@@ -998,6 +1109,9 @@ fn retain_push_snapshot(
         secrets: secrets.clone(),
         private_keys: collect_private_keys(vault, data),
         ssh_config: ssh_text_for_sync(vault),
+        totp_data: store::load_totp(vault).unwrap_or_default(),
+        account_data: store::load_accounts(vault).unwrap_or_default(),
+        icons: collect_icons(vault),
     };
     let enc_key = vault.subkey(LABEL_SYNC_OBJECT)?;
     let encrypted = encrypt_payload(&enc_key, &serde_json::to_vec(&payload)?)?;
@@ -1063,6 +1177,13 @@ pub fn restore_snapshot(vault: &Vault, s3: &S3Client, snapshot_id: &str) -> Resu
 
     store::save_data(vault, &data)?;
     store::save_secrets(vault, &payload.secrets)?;
+    store::save_totp(vault, &payload.totp_data)?;
+    store::save_accounts(vault, &payload.account_data)?;
+    for (hash, b64) in &payload.icons {
+        if let Ok(bytes) = B64.decode(b64) {
+            let _ = store::save_icon(vault, hash, &bytes);
+        }
+    }
 
     for (key_id, b64_bytes) in &payload.private_keys {
         if let Ok(key_bytes) = B64.decode(b64_bytes) {
@@ -1091,7 +1212,44 @@ pub fn restore_snapshot(vault: &Vault, s3: &S3Client, snapshot_id: &str) -> Resu
     })
 }
 
-fn stable_state_hash(data: &VaultData, secrets: &Secrets, ssh: &str) -> String {
+fn extra_objects_diverged(vault: &Vault, manifest: &SyncManifest) -> bool {
+    let totp = store::load_totp(vault).unwrap_or_default();
+    let accounts = store::load_accounts(vault).unwrap_or_default();
+    let totp_hash = sha256_hex(&serde_json::to_vec(&totp).unwrap_or_default());
+    let acc_hash = sha256_hex(&serde_json::to_vec(&accounts).unwrap_or_default());
+    let remote_totp = manifest
+        .objects
+        .get("data/totp.json")
+        .map(|e| e.sha256.as_str())
+        .unwrap_or("");
+    let remote_acc = manifest
+        .objects
+        .get("data/accounts.json")
+        .map(|e| e.sha256.as_str())
+        .unwrap_or("");
+    (!totp.entries.is_empty() && totp_hash != remote_totp)
+        || (!accounts.entries.is_empty() && acc_hash != remote_acc)
+        || (manifest.objects.contains_key("data/totp.json") && totp_hash != remote_totp)
+        || (manifest.objects.contains_key("data/accounts.json") && acc_hash != remote_acc)
+}
+
+fn collect_icons(vault: &Vault) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for hash in store::list_icon_hashes(vault) {
+        if let Ok(bytes) = store::load_icon(vault, &hash) {
+            out.insert(hash, B64.encode(bytes));
+        }
+    }
+    out
+}
+
+fn stable_state_hash(
+    data: &VaultData,
+    secrets: &Secrets,
+    ssh: &str,
+    totp: &crate::model::TotpData,
+    accounts: &crate::model::AccountData,
+) -> String {
     let mut identities: Vec<&_> = data.identities.iter().collect();
     identities.sort_by(|a, b| a.id.cmp(&b.id));
     let mut keys: Vec<crate::model::KeyRecord> = data.keys.clone();
@@ -1105,12 +1263,24 @@ fn stable_state_hash(data: &VaultData, secrets: &Secrets, ssh: &str) -> String {
     history.sort_by(|a, b| a.0.cmp(b.0));
     let mut passes: Vec<(&String, &String)> = secrets.key_passphrases.iter().collect();
     passes.sort_by(|a, b| a.0.cmp(b.0));
+    let mut seeds: Vec<(&String, &String)> = secrets.totp_seeds.iter().collect();
+    seeds.sort_by(|a, b| a.0.cmp(b.0));
+    let mut account_secrets: Vec<_> = secrets.account_secrets.iter().collect();
+    account_secrets.sort_by(|a, b| a.0.cmp(b.0));
+    let mut totp_entries = totp.entries.clone();
+    totp_entries.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut account_entries = accounts.entries.clone();
+    account_entries.sort_by(|a, b| a.id.cmp(&b.id));
     let payload = serde_json::json!({
         "identities": identities,
         "keys": keys,
         "cloneHistory": history,
         "passphrases": passes,
         "githubPat": secrets.github_pat,
+        "totpSeeds": seeds,
+        "accountSecrets": account_secrets,
+        "totpEntries": totp_entries,
+        "accountEntries": account_entries,
         "ssh": crate::sys::canonical_ssh_for_sync(ssh),
     });
     sha256_hex(payload.to_string().as_bytes())
@@ -1118,7 +1288,12 @@ fn stable_state_hash(data: &VaultData, secrets: &Secrets, ssh: &str) -> String {
 
 fn local_has_syncable_assets(vault: &Vault) -> Result<bool> {
     let data = store::load_data(vault)?;
-    Ok(!data.identities.is_empty() || !data.keys.is_empty())
+    let totp = store::load_totp(vault).unwrap_or_default();
+    let accounts = store::load_accounts(vault).unwrap_or_default();
+    Ok(!data.identities.is_empty()
+        || !data.keys.is_empty()
+        || !totp.entries.is_empty()
+        || !accounts.entries.is_empty())
 }
 
 /// 先拉取再按需推送。空本地不会覆盖已有云端。

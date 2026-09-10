@@ -8,7 +8,6 @@ use crate::update::{self, checker::UpdateCheckResult};
 use serde_json::json;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
-use tauri_plugin_updater::UpdaterExt;
 
 #[tauri::command]
 pub fn get_update_source(state: State<AppState>) -> Result<UpdateSource> {
@@ -42,11 +41,14 @@ pub fn set_auto_check_update(state: State<AppState>, enabled: bool) -> Result<()
 
 #[tauri::command]
 pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> Result<UpdateCheckResult> {
-    let src = {
+    let (src, proxy) = {
         let cfg = state.config.lock().unwrap();
-        update::source::effective_source(&cfg)
+        (
+            update::source::effective_source(&cfg),
+            crate::net::effective(&cfg),
+        )
     };
-    let result = update::checker::check(&app, &src).await?;
+    let result = update::checker::check(&app, &src, proxy.as_ref()).await?;
     persist_last_check(&state);
     Ok(result)
 }
@@ -84,18 +86,15 @@ pub fn get_last_update_check(state: State<AppState>) -> Result<Option<String>> {
 }
 
 async fn install_inner(app: &AppHandle, state: &AppState) -> Result<()> {
-    let src = {
+    let (src, proxy) = {
         let cfg = state.config.lock().unwrap();
-        update::source::effective_source(&cfg)
+        (
+            update::source::effective_source(&cfg),
+            crate::net::effective(&cfg),
+        )
     };
-    let endpoints = update::checker::resolve_check_endpoints(&src).await?;
-    let updater = app
-        .updater_builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .endpoints(endpoints)
-        .map_err(update::checker::map_updater_err)?
-        .build()
-        .map_err(update::checker::map_updater_err)?;
+    let endpoints = update::checker::resolve_check_endpoints(&src, proxy.as_ref()).await?;
+    let updater = update::checker::build_updater(app, endpoints, proxy.as_ref())?;
 
     let Some(update) = updater
         .check()

@@ -13,6 +13,8 @@ pub enum AppError {
     BadRecoveryKey(String),
     #[error("工作空间未解锁")]
     Locked,
+    #[error("查看机密需要重新输入访问密码")]
+    NeedReauth,
     #[error("加密/解密失败")]
     Crypto,
     #[error("解锁尝试过于频繁，请稍候再试")]
@@ -38,6 +40,7 @@ impl AppError {
             AppError::BadPassword => "BAD_PASSWORD",
             AppError::BadRecoveryKey(_) => "BAD_RECOVERY_KEY",
             AppError::Locked => "LOCKED",
+            AppError::NeedReauth => "NEED_REAUTH",
             AppError::Crypto => "CRYPTO",
             AppError::RateLimited => "RATE_LIMITED",
             AppError::Io(_) => "IO",

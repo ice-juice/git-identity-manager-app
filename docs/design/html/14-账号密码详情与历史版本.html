@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>账号密码详情与历史版本 - 设计原型</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div class="window">
+  <!-- 窗口标题栏 -->
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title">Git 多账号管理器 - 账号详情与历史版本追溯</span>
+    <span class="spacer"></span>
+    <span class="lockstate"><span class="lk"></span>已解锁 · 免密查看剩余 11m 15s</span>
+  </div>
+
+  <div class="body" style="background: #cbd5e1; padding: 24px; display:flex; align-items:center; justify-content:center;">
+    
+    <!-- 详情模态框主体 (双栏设计：左侧详情编辑，右侧低调展开的历史版本面板) -->
+    <div class="modal-dialog" style="width: 1080px; max-width: 95vw; height: 720px; box-shadow: var(--shadow-lg);">
+      <div class="modal-header">
+        <div class="row" style="gap:10px;">
+          <div class="totp-icon" style="width:32px; height:32px; font-size:14px; background:#24292e;">GH</div>
+          <div>
+            <h3 style="margin:0; font-size:15px;">编辑账号 · GitHub (techn4950)</h3>
+            <div class="muted" style="font-size:11.5px;">最后修改于 2026-09-08 14:20:10 · 已同步至云端工作空间</div>
+          </div>
+        </div>
+        <div class="row" style="gap:8px;">
+          <span class="badge2 i">已端到端加密</span>
+          <button class="btn sm ghost" style="font-size:16px;">✕</button>
+        </div>
+      </div>
+
+      <div class="modal-body" style="padding:0; display:flex; flex:1; min-height:0;">
+        
+        <!-- 左侧：账号基本资料表单 -->
+        <div style="flex: 1.1; padding: 24px; overflow-y:auto; border-right: 1px solid var(--border);">
+          <div class="section-title">👤 账号基本信息</div>
+
+          <div class="grid c2" style="gap:14px;">
+            <div class="field">
+              <label>平台名称 (Platform)</label>
+              <input class="input" value="GitHub">
+              <div class="hint">用于同平台多账号聚合分类</div>
+            </div>
+            <div class="field">
+              <label>用户名 / 邮箱 (Username)</label>
+              <input class="input" value="techn4950">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row between">
+              <label>登录密码 (Password)</label>
+              <span class="badge2 g" style="font-size:10.5px;">强度：极强 (16位 混合)</span>
+            </div>
+            <div class="row" style="gap:8px;">
+              <input class="input mono" type="password" value="K9#m$P2!zQ8@vL4x" style="letter-spacing:2px; font-weight:600;">
+              <button class="btn sm" title="显示/隐藏明文">👁️</button>
+              <button class="btn sm primary" title="复制密码">📋 复制</button>
+            </div>
+            <div class="hint" style="color:var(--text-soft);">修改此密码并保存时，旧密码将自动留存至右侧<b>历史版本</b>中。</div>
+          </div>
+
+          <div class="grid c2" style="gap:14px;">
+            <div class="field">
+              <label>归属分组</label>
+              <select class="input"><option>💼 工作平台</option><option>🧑 个人账号</option></select>
+            </div>
+            <div class="field">
+              <label>联动 2FA / TOTP 密钥</label>
+              <select class="input">
+                <option>⏱️ GitHub (techn4950) [已绑定]</option>
+                <option>无 (不联动)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>平台网站 URL</label>
+            <input class="input" value="https://github.com/login">
+          </div>
+
+          <div class="field">
+            <label>标签 (Tags，空格或回车分隔)</label>
+            <input class="input" value="核心开发 Git 工作">
+          </div>
+
+          <div class="field" style="margin-bottom:0;">
+            <label>备注说明 (Note)</label>
+            <textarea class="input" rows="2" style="resize:none;">关联工作空间 SSH 密钥 id_ed25519_techn，拥有 vortaq-trad 组织写权限。</textarea>
+          </div>
+        </div>
+
+        <!-- 右侧：低调展开的密码历史版本面板 (B7) -->
+        <div style="flex: 0.9; background:#f8fafc; padding: 24px; overflow-y:auto; display:flex; flex-direction:column;">
+          <div class="row between" style="margin-bottom:12px;">
+            <div class="section-title" style="margin:0;">
+              <span>🕒</span>
+              <span>密码历史版本 (3条记录)</span>
+            </div>
+            <span class="badge2 n" style="font-size:10.5px;">上限 10 条</span>
+          </div>
+
+          <div class="callout info" style="font-size:11.5px; padding:8px 12px; margin-bottom:14px;">
+            <span>🛡️</span>
+            <div>历史密码同等加密保护。可随时回看旧密码或一键回滚。回滚时会将当前密码安全存为新历史。</div>
+          </div>
+
+          <!-- 历史版本时间线列表 -->
+          <div class="timeline" style="flex:1;">
+            
+            <!-- 记录 1：当前正在使用的密码 -->
+            <div class="timeline-item">
+              <div class="timeline-dot current" title="当前密码"></div>
+              <div class="timeline-content" style="border-color:#86efac; background:#f0fdf4;">
+                <div class="row between" style="margin-bottom:4px;">
+                  <span style="font-size:11.5px; font-weight:600; color:#166534;">当前版本 (已使用 2 天)</span>
+                  <span class="mono" style="font-size:11px; color:var(--text-mute);">2026-09-08 14:20</span>
+                </div>
+                <div class="row between">
+                  <span class="mono" style="font-size:12.5px; letter-spacing:2px; color:var(--text-soft);">••••••••••••••••</span>
+                  <button class="btn sm" style="padding:2px 8px; font-size:11px;">👁️ 查看明文</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 记录 2：上一代历史密码 -->
+            <div class="timeline-item">
+              <div class="timeline-dot"></div>
+              <div class="timeline-content">
+                <div class="row between" style="margin-bottom:4px;">
+                  <span style="font-size:11.5px; font-weight:600; color:var(--text-soft);">上一代密码 (曾使用 54 天)</span>
+                  <span class="mono" style="font-size:11px; color:var(--text-mute);">2026-07-15 09:12</span>
+                </div>
+                <div class="row between" style="margin-top:6px;">
+                  <span class="mono" style="font-size:12.5px; letter-spacing:2px; color:var(--text-mute);">••••••••••••••</span>
+                  <div class="row" style="gap:6px;">
+                    <button class="btn sm" style="padding:2px 7px; font-size:11px;" title="走二次验证查看明文">👁️ 查看</button>
+                    <button class="btn sm primary" style="padding:2px 7px; font-size:11px; background:#475569; border-color:#475569;" title="将此历史密码回滚为当前登录密码">↩️ 回滚此密码</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 记录 3：最初导入的旧密码 -->
+            <div class="timeline-item">
+              <div class="timeline-dot"></div>
+              <div class="timeline-content">
+                <div class="row between" style="margin-bottom:4px;">
+                  <span style="font-size:11.5px; font-weight:600; color:var(--text-soft);">初始导入密码 (曾使用 186 天)</span>
+                  <span class="mono" style="font-size:11px; color:var(--text-mute);">2026-01-10 18:30</span>
+                </div>
+                <div class="row between" style="margin-top:6px;">
+                  <span class="mono" style="font-size:12.5px; letter-spacing:2px; color:var(--text-mute);">••••••••••••</span>
+                  <div class="row" style="gap:6px;">
+                    <button class="btn sm" style="padding:2px 7px; font-size:11px;">👁️ 查看</button>
+                    <button class="btn sm primary" style="padding:2px 7px; font-size:11px; background:#475569; border-color:#475569;">↩️ 回滚此密码</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 历史操作与审计底部 -->
+          <div class="row between" style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);">
+            <button class="btn sm danger" style="padding:3px 8px; font-size:11px;">🗑️ 清空该账号历史密码</button>
+            <span class="muted" style="font-size:11px;">所有查看与回滚均写入安全审计</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn ghost danger" style="margin-right:auto;">删除此账号</button>
+        <button class="btn ghost">取消</button>
+        <button class="btn primary">保存修改</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

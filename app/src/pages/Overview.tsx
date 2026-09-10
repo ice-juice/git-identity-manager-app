@@ -23,6 +23,7 @@ import {
   type UpdateIdentityArgs,
 } from "../lib/ipc";
 import { PageHead, Empty, Badge } from "../ui/common";
+import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 
 // 根据身份名称生成高质感头像背景色
@@ -102,7 +103,7 @@ export function Overview() {
     if (!keyId) return;
     const k = keys.find((item) => item.id === keyId);
     if (!k || !k.publicOpenssh) return;
-    await navigator.clipboard.writeText(k.publicOpenssh.trim());
+    await writeClipboard(k.publicOpenssh.trim());
     setCopiedKeyId(keyId);
     setTimeout(() => setCopiedKeyId(null), 1800);
   };

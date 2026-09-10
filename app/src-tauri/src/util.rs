@@ -49,6 +49,14 @@ pub fn backup_file(path: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(backup))
 }
 
+/// UTC RFC3339 时间戳。
+pub fn now_rfc3339() -> String {
+    use time::format_description::well_known::Rfc3339;
+    time::OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
 /// 追加一条脱敏审计日志。
 pub fn audit(workspace_root: &Path, action: &str) {
     use std::io::Write;

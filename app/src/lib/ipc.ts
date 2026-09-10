@@ -297,7 +297,7 @@ export interface CloudSyncStatus {
   localIdentityCount: number;
   localKeyCount: number;
   localRepoCount: number;
-  status: "synced" | "local_ahead" | "remote_ahead" | "not_synced" | "different_workspace" | "unconfigured";
+  status: "synced" | "local_ahead" | "remote_ahead" | "not_synced" | "different_workspace" | "unconfigured" | "checking";
   headerReady?: boolean;
 }
 
@@ -326,6 +326,14 @@ export interface CloudSnapshot {
   repoCount: number;
   isRecent?: boolean;
   isDailyFirst?: boolean;
+}
+
+export interface CloudSyncPageData {
+  config: S3Config | null;
+  autoSync: AutoSyncSettings;
+  status: CloudSyncStatus;
+  snapshots: CloudSnapshot[];
+  remoteFresh: boolean;
 }
 
 export interface CloudRestorePreview {
@@ -360,6 +368,27 @@ export interface UpdateProgress {
   phase: "started" | "downloading" | "finished";
   downloaded: number;
   total: number | null;
+}
+
+export interface NetworkProxy {
+  enabled: boolean;
+  scheme: "http" | "https" | "socks5" | string;
+  host: string;
+  port: number;
+  username?: string | null;
+  password?: string | null;
+  applyToGitHttps: boolean;
+  applyToSsh: boolean;
+  applyToCloudSync: boolean;
+}
+
+export interface ProxyTestResult {
+  httpsOk: boolean;
+  httpsMs: number | null;
+  httpsError: string | null;
+  sshHelperFound: boolean;
+  sshHelperName: string | null;
+  sshNote: string | null;
 }
 
 // ---- 命令 ----
@@ -475,12 +504,15 @@ export const api = {
   importS3Config: (srcPath: string) => invoke<S3Config>("import_s3_config", { srcPath }),
   testCloudSyncConfig: (syncConfig: S3Config) =>
     invoke<number>("test_cloud_sync_config", { syncConfig }),
-  getCloudSyncStatus: () => invoke<CloudSyncStatus>("get_cloud_sync_status"),
+  getCloudSyncPage: () => invoke<CloudSyncPageData>("get_cloud_sync_page"),
+  getCloudSyncStatus: (lite?: boolean) =>
+    invoke<CloudSyncStatus>("get_cloud_sync_status", lite === undefined ? {} : { lite }),
   cloudSyncPush: () => invoke<SyncResult>("cloud_sync_push"),
   cloudSyncPull: () => invoke<SyncResult>("cloud_sync_pull"),
   getAutoSyncSettings: () => invoke<AutoSyncSettings>("get_auto_sync_settings"),
   setAutoSyncMinutes: (minutes: number) => invoke<number>("set_auto_sync_minutes", { minutes }),
-  listCloudSnapshots: () => invoke<CloudSnapshot[]>("list_cloud_snapshots"),
+  listCloudSnapshots: (force?: boolean) =>
+    invoke<CloudSnapshot[]>("list_cloud_snapshots", force === undefined ? {} : { force }),
   restoreCloudSnapshot: (snapshotId: string) =>
     invoke<SyncResult>("restore_cloud_snapshot", { snapshotId }),
   runAutoSyncNow: () => invoke<SyncResult | null>("run_auto_sync_now"),
@@ -503,9 +535,213 @@ export const api = {
   downloadAndInstallUpdate: () => invoke<void>("download_and_install_update"),
   skipUpdateVersion: (version: string) => invoke<void>("skip_update_version", { version }),
   getLastUpdateCheck: () => invoke<string | null>("get_last_update_check"),
+
+  getNetworkProxy: () => invoke<NetworkProxy | null>("get_network_proxy"),
+  saveNetworkProxy: (proxy: NetworkProxy | null) => invoke<void>("save_network_proxy", { proxy }),
+  testNetworkProxy: (proxy: NetworkProxy) => invoke<ProxyTestResult>("test_network_proxy", { proxy }),
+
+  totpList: () => invoke<{ entries: TotpEntry[]; groups: GroupMeta[] }>("totp_list"),
+  totpAdd: (args: TotpUpsertArgs) => invoke<TotpEntry>("totp_add", { args }),
+  totpUpdate: (args: TotpUpsertArgs) => invoke<TotpEntry>("totp_update", { args }),
+  totpDelete: (id: string) => invoke<void>("totp_delete", { id }),
+  totpSaveGroups: (groups: GroupMeta[]) => invoke<void>("totp_save_groups", { groups }),
+  totpGenerateCode: (id: string, password?: string) =>
+    invoke<TotpCode>("totp_generate_code", { id, password: password ?? null }),
+  totpParseUri: (uri: string) => invoke<ParsedTotpPreview>("totp_parse_uri", { uri }),
+  totpImportFromImage: (path: string) => invoke<ParsedTotpPreview>("totp_import_from_image", { path }),
+  totpScanScreen: () => invoke<ScreenHit[]>("totp_scan_screen"),
+  totpRevealSecret: (id: string, password: string) =>
+    invoke<TotpSecretReveal>("totp_reveal_secret", { id, password }),
+  totpExportQr: (id: string, password: string) => invoke<string>("totp_export_qr", { id, password }),
+
+  accountList: () => invoke<{ entries: AccountEntry[]; groups: GroupMeta[] }>("account_list"),
+  accountAdd: (args: AccountUpsertArgs) => invoke<AccountEntry>("account_add", { args }),
+  accountUpdate: (args: AccountUpsertArgs) => invoke<AccountEntry>("account_update", { args }),
+  accountDelete: (id: string) => invoke<void>("account_delete", { id }),
+  accountSaveGroups: (groups: GroupMeta[]) => invoke<void>("account_save_groups", { groups }),
+  accountRevealPassword: (id: string, password?: string) =>
+    invoke<string>("account_reveal_password", { id, password: password ?? null }),
+  accountTouch: (id: string) => invoke<void>("account_touch", { id }),
+  accountHistoryList: (id: string) => invoke<HistoryMeta[]>("account_history_list", { id }),
+  accountRevealHistory: (id: string, index: number, password?: string) =>
+    invoke<string>("account_reveal_history", { id, index, password: password ?? null }),
+  accountRollbackHistory: (id: string, index: number) =>
+    invoke<void>("account_rollback_history", { id, index }),
+  accountClearHistory: (id: string) => invoke<void>("account_clear_history", { id }),
+
+  clipboardWrite: (text: string, secret = false) =>
+    invoke<ClipboardWriteResult>("clipboard_write", { text, secret }),
+  clipboardClear: () => invoke<void>("clipboard_clear"),
+  getRevealSettings: () => invoke<RevealSettings>("get_reveal_settings"),
+  setRevealGraceMinutes: (minutes: number) => invoke<number>("set_reveal_grace_minutes", { minutes }),
+  setClipboardClearSeconds: (seconds: number) =>
+    invoke<number>("set_clipboard_clear_seconds", { seconds }),
+  setAccountHistoryLimit: (limit: number) => invoke<number>("set_account_history_limit", { limit }),
+  iconListBuiltin: () => invoke<BuiltinIconInfo[]>("icon_list_builtin"),
+  iconUploadCustom: (filePath: string) => invoke<CustomIconInfo>("icon_upload_custom", { filePath }),
+  iconGetCustom: (iconRef: string) => invoke<string>("icon_get_custom", { iconRef }),
+
+  securityChecklist: () => invoke<SecurityChecklist>("security_checklist"),
 };
 
 export function errMessage(e: unknown): string {
   if (e && typeof e === "object" && "message" in e) return String((e as AppErrorShape).message);
   return String(e);
+}
+
+export function errCode(e: unknown): string {
+  if (e && typeof e === "object" && "code" in e) return String((e as AppErrorShape).code);
+  return "";
+}
+
+export interface GroupMeta {
+  name: string;
+  color?: string | null;
+  sortOrder: number;
+}
+
+export interface TotpEntry {
+  id: string;
+  issuer: string;
+  account: string;
+  note?: string | null;
+  url?: string | null;
+  group?: string | null;
+  algorithm: string;
+  digits: number;
+  period: number;
+  icon?: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  hasSeed?: boolean;
+}
+
+export interface AccountEntry {
+  id: string;
+  platform: string;
+  username: string;
+  displayName?: string | null;
+  url?: string | null;
+  note?: string | null;
+  group?: string | null;
+  tags: string[];
+  icon?: string | null;
+  pinned: boolean;
+  sortOrder: number;
+  totpRef?: string | null;
+  lastUsedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  hasPassword?: boolean;
+}
+
+export interface TotpCode {
+  code: string;
+  period: number;
+  remainingSeconds: number;
+}
+
+export interface TotpSecretReveal {
+  secretBase32: string;
+  otpauthUri: string;
+  qrPngBase64: string;
+}
+
+export interface ParsedTotpPreview {
+  issuer: string;
+  account: string;
+  algorithm: string;
+  digits: number;
+  period: number;
+  suggestedIcon?: string | null;
+  secret?: string;
+}
+
+export interface ScreenHit {
+  display: string;
+  uri: string;
+  parsed: { issuer: string; account: string; algorithm: string; digits: number; period: number };
+}
+
+export interface HistoryMeta {
+  index: number;
+  replacedAt: string;
+}
+
+export interface BuiltinIconInfo {
+  id: string;
+  name: string;
+  color: string;
+  glyph: string;
+}
+
+export interface CustomIconInfo {
+  iconRef: string;
+  dataUrl: string;
+  bytes: number;
+}
+
+export interface RevealSettings {
+  revealGraceMinutes: number;
+  clipboardClearSeconds: number;
+  accountHistoryLimit: number;
+}
+
+export type SecuritySeverity = "ok" | "info" | "warn";
+export type SecurityLevel = "safe" | "caution" | "risk";
+export type SecurityCategory = "storage" | "app";
+
+export interface SecurityFinding {
+  id: string;
+  category: SecurityCategory;
+  severity: SecuritySeverity;
+  title: string;
+  detail: string;
+  advice: string;
+  settingsAnchor?: string | null;
+  limitation?: string | null;
+}
+
+export interface SecurityChecklist {
+  checkedAt: string;
+  level: SecurityLevel;
+  items: SecurityFinding[];
+}
+
+export interface ClipboardWriteResult {
+  excluded: boolean;
+  fallback: boolean;
+  notice?: string | null;
+}
+
+export interface TotpUpsertArgs {
+  id?: string;
+  issuer: string;
+  account: string;
+  secret?: string;
+  note?: string;
+  url?: string;
+  group?: string;
+  algorithm?: string;
+  digits?: number;
+  period?: number;
+  icon?: string;
+  sortOrder?: number;
+}
+
+export interface AccountUpsertArgs {
+  id?: string;
+  platform: string;
+  username: string;
+  password?: string;
+  displayName?: string;
+  url?: string;
+  note?: string;
+  group?: string;
+  tags?: string[];
+  icon?: string;
+  pinned?: boolean;
+  sortOrder?: number;
+  totpRef?: string;
 }

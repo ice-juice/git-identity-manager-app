@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -8,13 +8,27 @@ import {
   Rocket,
   AlertTriangle,
   ExternalLink,
+  Globe,
   RefreshCw,
   Cloud,
   FileCog,
+  Play,
 } from "lucide-react";
-import { api, errMessage, type UpdateCheckResult, type UpdateSource } from "../lib/ipc";
+import {
+  api,
+  errMessage,
+  type NetworkProxy,
+  type ProxyTestResult,
+  type SecurityChecklist,
+  type SecurityFinding,
+  type SecurityLevel,
+  type UpdateCheckResult,
+  type UpdateSource,
+} from "../lib/ipc";
+import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 import { THEME_OPTIONS } from "../lib/theme";
+import { UNLOCK_ANIM_STYLES } from "../lib/prefs";
 import { PageHead, Card, FieldLabel, Badge } from "../ui/common";
 
 function closeActionLabel(action: "tray" | "quit" | null | undefined): string {
@@ -240,6 +254,287 @@ function formatWhen(iso: string | null | undefined): string {
   return d.toLocaleString();
 }
 
+function UpdateNotes({ notes }: { notes: string }) {
+  const blocks = notes
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line, i, arr) => line.trim() !== "" || (i > 0 && arr[i - 1].trim() !== ""));
+
+  return (
+    <div className="update-notes">
+      {blocks.map((line, i) => {
+        const heading = line.match(/^###\s+(.+)/);
+        if (heading) {
+          return (
+            <div key={i} className="update-notes-h">
+              {heading[1]}
+            </div>
+          );
+        }
+        const item = line.match(/^[-*]\s+(.+)/);
+        if (item) {
+          return (
+            <div key={i} className="update-notes-li">
+              {renderInline(item[1])}
+            </div>
+          );
+        }
+        return (
+          <div key={i} className="update-notes-p">
+            {renderInline(line)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderInline(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    const bold = part.match(/^\*\*([^*]+)\*\*$/);
+    if (bold) return <strong key={i}>{bold[1]}</strong>;
+    return <span key={i}>{part}</span>;
+  });
+}
+
+const EMPTY_PROXY: NetworkProxy = {
+  enabled: false,
+  scheme: "http",
+  host: "127.0.0.1",
+  port: 7890,
+  username: "",
+  password: "",
+  applyToGitHttps: true,
+  applyToSsh: true,
+  applyToCloudSync: true,
+};
+
+function NetworkProxyCard() {
+  const [form, setForm] = useState<NetworkProxy>(EMPTY_PROXY);
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [test, setTest] = useState<ProxyTestResult | null>(null);
+
+  useEffect(() => {
+    api
+      .getNetworkProxy()
+      .then((p) => {
+        if (p) {
+          setForm({
+            ...EMPTY_PROXY,
+            ...p,
+            username: p.username ?? "",
+            password: p.password ?? "",
+          });
+        }
+      })
+      .catch((e) => setErr(errMessage(e)));
+  }, []);
+
+  function patch(partial: Partial<NetworkProxy>) {
+    setForm((prev) => ({ ...prev, ...partial }));
+  }
+
+  function payload(): NetworkProxy {
+    const port = Number(form.port);
+    return {
+      ...form,
+      scheme: form.scheme || "http",
+      host: form.host.trim(),
+      port: Number.isFinite(port) ? port : 0,
+      username: form.username?.trim() || null,
+      password: form.password || null,
+    };
+  }
+
+  async function save() {
+    setErr("");
+    setMsg("");
+    setBusy(true);
+    try {
+      await api.saveNetworkProxy(payload());
+      setMsg(payload().enabled ? "代理已保存并启用" : "代理已保存（当前关闭）");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearProxy() {
+    setErr("");
+    setMsg("");
+    setBusy(true);
+    try {
+      await api.saveNetworkProxy(null);
+      setForm(EMPTY_PROXY);
+      setTest(null);
+      setMsg("已清除代理，恢复直连");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testNow() {
+    setErr("");
+    setMsg("");
+    setTesting(true);
+    try {
+      const r = await api.testNetworkProxy({ ...payload(), enabled: true });
+      setTest(r);
+      setMsg(r.httpsOk ? `GitHub HTTPS 通，耗时 ${r.httpsMs} ms` : "GitHub HTTPS 未通，请检查代理");
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Card title="网络代理">
+      <div className="stack">
+        {err && <div className="err-text">{err}</div>}
+        {msg && <div className="callout info">{msg}</div>}
+        <div className="field">
+          <div className="between">
+            <div>
+              <FieldLabel
+                name="启用代理"
+                tip="只作用于本应用发起的请求（检查更新、GitHub API、Git HTTPS、SSH、云同步），不改系统代理。"
+              />
+              <div className="hint">部分地区访问 GitHub / GitLab 不稳定时打开。密码保存在本机配置文件。</div>
+            </div>
+            <button
+              type="button"
+              className={"switch" + (form.enabled ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ enabled: !form.enabled })}
+            />
+          </div>
+        </div>
+
+        <div className="field">
+          <label className="field-label">协议</label>
+          <div className="choice-row">
+            {(["http", "https", "socks5"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={"choice" + (form.scheme === s ? " on" : "")}
+                onClick={() => patch({ scheme: s })}
+              >
+                {s.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <div className="field grow">
+            <label className="field-label">主机</label>
+            <input
+              className="input mono"
+              value={form.host}
+              onChange={(e) => patch({ host: e.target.value })}
+              placeholder="127.0.0.1"
+            />
+          </div>
+          <div className="field" style={{ width: 110 }}>
+            <label className="field-label">端口</label>
+            <input
+              className="input mono"
+              type="number"
+              min={1}
+              max={65535}
+              value={form.port}
+              onChange={(e) => patch({ port: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <div className="field grow">
+            <label className="field-label">用户名（可选）</label>
+            <input className="input" value={form.username ?? ""} onChange={(e) => patch({ username: e.target.value })} />
+          </div>
+          <div className="field grow">
+            <label className="field-label">密码（可选）</label>
+            <input
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={form.password ?? ""}
+              onChange={(e) => patch({ password: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div className="field">
+          <div className="between">
+            <FieldLabel name="Git HTTPS 走代理" tip="本应用执行 git clone 等 HTTPS 请求时写入 HTTP(S)_PROXY。" />
+            <button
+              type="button"
+              className={"switch" + (form.applyToGitHttps ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ applyToGitHttps: !form.applyToGitHttps })}
+            />
+          </div>
+        </div>
+        <div className="field">
+          <div className="between">
+            <FieldLabel
+              name="SSH 走代理"
+              tip="为本应用拉起的 ssh / git 注入 ProxyCommand。需要本机有 Git 的 connect 或 ncat。不修改 ~/.ssh/config。"
+            />
+            <button
+              type="button"
+              className={"switch" + (form.applyToSsh ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ applyToSsh: !form.applyToSsh })}
+            />
+          </div>
+        </div>
+        <div className="field">
+          <div className="between">
+            <FieldLabel name="云同步走代理" tip="R2 / S3 备份默认跟随总开关。国内对象存储可关掉此项。" />
+            <button
+              type="button"
+              className={"switch" + (form.applyToCloudSync ? "" : " off")}
+              disabled={busy}
+              onClick={() => patch({ applyToCloudSync: !form.applyToCloudSync })}
+            />
+          </div>
+        </div>
+
+        {test && (
+          <div className={"callout " + (test.httpsOk ? "good" : "warn")}>
+            <div>{test.httpsOk ? `GitHub HTTPS 成功（${test.httpsMs} ms）` : test.httpsError}</div>
+            {test.sshNote && <div>{test.sshNote}</div>}
+          </div>
+        )}
+
+        <div className="row" style={{ flexWrap: "wrap", marginTop: 4 }}>
+          <button type="button" className="btn primary sm" disabled={busy || testing} onClick={testNow}>
+            <Globe size={13} style={{ marginRight: 3 }} />
+            {testing ? "正在测试…" : "测试连接"}
+          </button>
+          <button type="button" className="btn sm" disabled={busy} onClick={save}>
+            保存
+          </button>
+          <button type="button" className="btn ghost sm" disabled={busy} onClick={clearProxy}>
+            清除代理
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function AboutUpdateCard() {
   const [version, setVersion] = useState("");
   const [lastCheck, setLastCheck] = useState<string | null>(null);
@@ -415,9 +710,7 @@ function AboutUpdateCard() {
                 <strong>新版本 {result.latestVersion}</strong>
                 {result.pubDate ? ` · ${formatWhen(result.pubDate)}` : ""}
               </div>
-              {result.notes && (
-                <pre className="update-notes">{result.notes}</pre>
-              )}
+              {result.notes && <UpdateNotes notes={result.notes} />}
               {showManualOnly && (
                 <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
                   当前安装方式不支持应用内更新（例如 Linux 非 AppImage），请使用手动下载。
@@ -531,6 +824,8 @@ function AboutUpdateCard() {
           </div>
         </div>
       </Card>
+
+      <NetworkProxyCard />
     </div>
   );
 }
@@ -544,15 +839,188 @@ function formatExpiry(iso: string | null): string {
 
 type SettingsTab = "general" | "security" | "workspace" | "about" | "danger";
 
+const SETTING_ANCHOR_TAB: Record<string, SettingsTab> = {
+  "workspace-path": "workspace",
+  "auto-lock": "workspace",
+  "lock-on-sleep": "workspace",
+  "reveal-grace": "security",
+  "clipboard-clear": "security",
+};
+
+function scrollToSettingAnchor(anchor: string) {
+  const el = document.getElementById(`setting-${anchor}`);
+  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function levelBadge(level: SecurityLevel): { kind: string; label: string } {
+  if (level === "risk") return { kind: "danger", label: "有风险" };
+  if (level === "caution") return { kind: "warn", label: "需留意" };
+  return { kind: "good", label: "安全" };
+}
+
+function findingCallout(severity: SecurityFinding["severity"]): string {
+  if (severity === "warn") return "warn";
+  if (severity === "info") return "info";
+  return "good";
+}
+
+function SecurityChecklistCard({
+  refreshNonce,
+  onJump,
+}: {
+  refreshNonce: number;
+  onJump: (anchor: string) => void;
+}) {
+  const [list, setList] = useState<SecurityChecklist | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showOk, setShowOk] = useState(false);
+
+  async function load() {
+    setErr("");
+    setBusy(true);
+    try {
+      setList(await api.securityChecklist());
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    load().catch((e) => setErr(errMessage(e)));
+  }, [refreshNonce]);
+
+  const todos = list?.items.filter((i) => i.severity !== "ok") ?? [];
+  const oks = list?.items.filter((i) => i.severity === "ok") ?? [];
+  const badge = list ? levelBadge(list.level) : null;
+
+  return (
+    <Card
+      title="安全自查"
+      actions={
+        <button type="button" className="btn ghost sm" disabled={busy} onClick={load}>
+          <RefreshCw size={13} className={busy ? "animate-spin" : ""} style={{ marginRight: 3 }} />
+          {busy ? "正在检查…" : "刷新"}
+        </button>
+      }
+    >
+      <div className="stack">
+        {err && <div className="err-text">{err}</div>}
+        {badge && (
+          <div className="kv">
+            <span className="muted">当前状态</span>
+            <span>
+              <Badge kind={badge.kind}>{badge.label}</Badge>
+              {list?.checkedAt && (
+                <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                  {formatWhen(list.checkedAt)}
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+
+        <div className="callout info" style={{ fontSize: 12 }}>
+          <div>这份清单只读本机配置与工作空间路径，全程在本机计算，不上报、零遥测。</div>
+          <div style={{ marginTop: 6 }}>
+            系统不会告诉本应用谁在监听剪贴板、谁在截屏或录屏，因此无法指认监听者或截屏调用方。
+          </div>
+          <div style={{ marginTop: 6 }}>
+            剪贴板排除是给系统历史、云剪贴板和守规矩的管理器看的协作式约定，恶意程序可以无视。它不能防木马，也不会让截图变黑。
+          </div>
+        </div>
+
+        {todos.length === 0 && list && (
+          <div className="muted" style={{ fontSize: 12 }}>
+            当前没有待处理项。下面折叠的是已通过的检查。
+          </div>
+        )}
+
+        {todos.map((item) => (
+          <div key={item.id} className={"callout " + findingCallout(item.severity)}>
+            <div className="between" style={{ alignItems: "flex-start", gap: 8 }}>
+              <strong>{item.title}</strong>
+              <Badge kind={item.severity === "warn" ? "danger" : "warn"}>
+                {item.severity === "warn" ? "建议处理" : "留意"}
+              </Badge>
+            </div>
+            <div style={{ marginTop: 6 }}>{item.detail}</div>
+            <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+              {item.advice}
+            </div>
+            {item.limitation && (
+              <div className="hint" style={{ marginTop: 6 }}>
+                {item.limitation}
+              </div>
+            )}
+            {item.settingsAnchor && (
+              <div style={{ marginTop: 8 }}>
+                <button type="button" className="btn sm" onClick={() => onJump(item.settingsAnchor!)}>
+                  前往对应设置
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {oks.length > 0 && (
+          <div>
+            <button type="button" className="btn ghost sm" onClick={() => setShowOk((v) => !v)}>
+              {showOk ? "收起已通过的检查" : `已通过的检查（${oks.length}）`}
+            </button>
+            {showOk && (
+              <div className="stack" style={{ marginTop: 8 }}>
+                {oks.map((item) => (
+                  <div key={item.id} className="callout good">
+                    <div className="between">
+                      <strong>{item.title}</strong>
+                      <Badge kind="good">通过</Badge>
+                    </div>
+                    <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                      {item.detail}
+                    </div>
+                    {item.limitation && (
+                      <div className="hint" style={{ marginTop: 6 }}>
+                        {item.limitation}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export function Settings() {
   const navigate = useNavigate();
-  const { status, refresh, theme, setTheme } = useApp();
+  const {
+    status,
+    refresh,
+    theme,
+    setTheme,
+    unlockAnimEnabled,
+    setUnlockAnimEnabled,
+    unlockAnimStyle,
+    setUnlockAnimStyle,
+    startUnlockAnim,
+  } = useApp();
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const [checklistNonce, setChecklistNonce] = useState(0);
+  const pendingAnchor = useRef<string | null>(null);
 
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [newPw2, setNewPw2] = useState("");
   const [graceDays, setGraceDays] = useState(String(status?.graceDays ?? 0));
+  const [revealGrace, setRevealGrace] = useState("5");
+  const [clipSec, setClipSec] = useState("20");
+  const [histLimit, setHistLimit] = useState("10");
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -561,6 +1029,33 @@ export function Settings() {
   useEffect(() => {
     setGraceDays(String(status?.graceDays ?? 0));
   }, [status?.graceDays]);
+
+  useEffect(() => {
+    api.getRevealSettings().then((s) => {
+      setRevealGrace(String(s.revealGraceMinutes));
+      setClipSec(String(s.clipboardClearSeconds));
+      setHistLimit(String(s.accountHistoryLimit));
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const anchor = pendingAnchor.current;
+    if (!anchor) return;
+    pendingAnchor.current = null;
+    const id = window.setTimeout(() => scrollToSettingAnchor(anchor), 0);
+    return () => window.clearTimeout(id);
+  }, [activeTab]);
+
+  function jumpToSetting(anchor: string) {
+    const tab = SETTING_ANCHOR_TAB[anchor] ?? "security";
+    pendingAnchor.current = anchor;
+    if (tab !== activeTab) {
+      setActiveTab(tab);
+    } else {
+      scrollToSettingAnchor(anchor);
+      pendingAnchor.current = null;
+    }
+  }
 
   async function changePassword() {
     setErr("");
@@ -708,6 +1203,106 @@ export function Settings() {
                 </div>
               </Card>
 
+              <Card title="解锁开门动画">
+                <div className="field">
+                  <div className="between">
+                    <div>
+                      <FieldLabel
+                        name="解锁过场动画"
+                        tip="每次手动输入访问密码/恢复密钥解锁成功后播放开门过场动画。免验证静默解锁不会触发。"
+                      />
+                      <div className="hint">
+                        关闭后解锁将直接进入主界面。播放中可点击任意处或按 Esc / 空格 / 回车跳过。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={"switch" + (unlockAnimEnabled ? "" : " off")}
+                      onClick={() => setUnlockAnimEnabled(!unlockAnimEnabled)}
+                    />
+                  </div>
+
+                  {unlockAnimEnabled && (
+                    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span className="hint" style={{ fontWeight: 600, color: "var(--text-1)" }}>
+                          选择动画风格
+                        </span>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          onClick={() => startUnlockAnim(unlockAnimStyle)}
+                          title="预览当前选中的动画风格"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                        >
+                          <Play size={13} /> 预览当前动画
+                        </button>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+                          gap: 10,
+                        }}
+                      >
+                        {UNLOCK_ANIM_STYLES.map((st) => {
+                          const active = unlockAnimStyle === st.id;
+                          return (
+                            <div
+                              key={st.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setUnlockAnimStyle(st.id)}
+                              style={{
+                                padding: "12px 14px",
+                                borderRadius: "var(--radius, 10px)",
+                                border: active
+                                  ? "1.5px solid var(--accent, #6366f1)"
+                                  : "1px solid var(--border, rgba(255, 255, 255, 0.08))",
+                                background: active
+                                  ? "var(--accent-dim, rgba(99, 102, 241, 0.08))"
+                                  : "var(--bg-card, rgba(255, 255, 255, 0.02))",
+                                cursor: "pointer",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 6,
+                                transition: "all 0.15s ease",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <span style={{ fontSize: 18 }}>{st.icon}</span>
+                                  <span style={{ fontWeight: 600, fontSize: 13, color: active ? "var(--accent)" : "var(--text-1)" }}>
+                                    {st.label}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn ghost sm"
+                                  style={{ padding: "2px 8px", fontSize: 11, height: 24 }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setUnlockAnimStyle(st.id);
+                                    startUnlockAnim(st.id);
+                                  }}
+                                  title={`试看${st.label}`}
+                                >
+                                  试看
+                                </button>
+                              </div>
+                              <div style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.4 }}>
+                                {st.desc}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Card>
+
               <Card title="系统与窗口行为">
                 <div className="stack">
                   <div className="field">
@@ -768,6 +1363,8 @@ export function Settings() {
           {/* TAB 2: 安全与凭据 */}
           {activeTab === "security" && (
             <>
+              <SecurityChecklistCard refreshNonce={checklistNonce} onJump={jumpToSetting} />
+
               <Card title="开机免验证 (Windows DPAPI)">
                 <div className="stack">
                   <div className="field">
@@ -806,6 +1403,87 @@ export function Settings() {
                 </div>
               </Card>
 
+              <Card title="查看 OTP / 密码的免密时效">
+                <div className="stack">
+                  <div className="muted">独立于开机免验证。锁定或退出后立即失效。取回 TOTP 原始密钥仍每次都要密码。</div>
+                  <div className="field" id="setting-reveal-grace">
+                    <FieldLabel name="免密查看时效" tip="首次验证后，在该时间内再看验证码或账号密码不用重复输入。0 表示每次都验。" />
+                    <div className="row" style={{ marginTop: 4 }}>
+                      <select className="input" style={{ width: 160 }} value={revealGrace} onChange={(e) => setRevealGrace(e.target.value)}>
+                        <option value="0">每次都验证</option>
+                        <option value="1">1 分钟</option>
+                        <option value="5">5 分钟（推荐）</option>
+                        <option value="15">15 分钟</option>
+                        <option value="30">30 分钟</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn primary sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            await api.setRevealGraceMinutes(Number(revealGrace));
+                            setMsg("已保存免密查看时效");
+                            setChecklistNonce((n) => n + 1);
+                          } catch (e) {
+                            setErr(errMessage(e));
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                  <div className="field" id="setting-clipboard-clear">
+                    <label className="field-label">复制后清空剪贴板</label>
+                    <div className="row">
+                      <select className="input" style={{ width: 140 }} value={clipSec} onChange={(e) => setClipSec(e.target.value)}>
+                        <option value="0">不清空</option>
+                        <option value="10">10 秒</option>
+                        <option value="20">20 秒</option>
+                        <option value="60">60 秒</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          await api.setClipboardClearSeconds(Number(clipSec));
+                          setMsg("已保存剪贴板清空时间");
+                          setChecklistNonce((n) => n + 1);
+                        }}
+                      >
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label className="field-label">密码历史保留条数</label>
+                    <div className="row">
+                      <select className="input" style={{ width: 120 }} value={histLimit} onChange={(e) => setHistLimit(e.target.value)}>
+                        <option value="5">5 条</option>
+                        <option value="10">10 条</option>
+                        <option value="20">20 条</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          await api.setAccountHistoryLimit(Number(histLimit));
+                          setMsg("已保存历史条数上限");
+                        }}
+                      >
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
               <Card title="修改主访问密码">
                 <div className="stack" style={{ maxWidth: 420 }}>
                   <div className="field">
@@ -836,7 +1514,7 @@ export function Settings() {
                       <div className="callout danger">⚠️ 仅显示一次，请立即保存：</div>
                       <div className="reckey">{newRecovery}</div>
                       <div className="row">
-                        <button className="btn sm" onClick={() => navigator.clipboard.writeText(newRecovery)}>
+                        <button className="btn sm" onClick={() => writeClipboard(newRecovery, true)}>
                           复制
                         </button>
                         <button className="btn ghost sm" onClick={() => setNewRecovery("")}>
@@ -861,7 +1539,7 @@ export function Settings() {
             <>
               <Card title="工作空间信息">
                 <div className="stack">
-                  <div className="kv">
+                  <div className="kv" id="setting-workspace-path">
                     <span className="muted">存储路径</span>
                     <span className="mono">{status?.workspacePath ?? "—"}</span>
                   </div>
@@ -878,9 +1556,15 @@ export function Settings() {
                     <span className="muted">空间 ID</span>
                     <span className="mono">{status?.workspaceId ?? "—"}</span>
                   </div>
-                  <div className="kv">
+                  <div className="kv" id="setting-auto-lock">
                     <span className="muted">自动锁定</span>
                     <span>{status?.autoLockMinutes ?? 0} 分钟</span>
+                  </div>
+                  <div className="kv" id="setting-lock-on-sleep">
+                    <span className="muted">休眠/锁屏锁定</span>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      由本机配置 lockOnSleep 控制，见上方安全自查建议
+                    </span>
                   </div>
                 </div>
               </Card>

@@ -214,6 +214,7 @@ pub fn lock_in_memory(state: &AppState) {
     if let Some(v) = state.vault.lock().unwrap().as_mut() {
         v.lock();
     }
+    crate::commands::clear_reveal_grace(state);
     state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut n) = state.startup_note.lock() {
         *n = None;
@@ -331,8 +332,15 @@ fn load_agent_best_effort(state: &AppState) {
 pub fn vault_try_grace_unlock(app: AppHandle, state: State<AppState>) -> Result<bool> {
     let ok = try_grace_unlock_silent(&state);
     if ok {
-        begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
-        schedule_after_unlock(app);
+        // 首个 IPC 只恢复本机会话并立刻返回，让 WebView 先画出首帧。
+        // 云同步 / 补 SSH / 加载 agent 延后到后台，避免初始化期事件风暴拖死消息泵。
+        std::thread::Builder::new()
+            .name("gam-after-unlock".into())
+            .spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                schedule_after_unlock(app);
+            })
+            .ok();
     }
     Ok(ok)
 }

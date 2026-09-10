@@ -1,7 +1,7 @@
-# 打包与发布只认 release 分支：
-# - push 到 release：多平台出包，上传 Artifacts（不建 GitHub Release）
-# - 在 release 上打 v* 标签，或手动 Run workflow 并勾选 create_release：
-#   建草稿 Release，并合并生成 latest.json
+# 打包与发布只认 release 分支上的提交：
+# - 只推 release 分支：不打包（避免和打标签各跑一轮）
+# - 推送 v* 标签：多平台出包，建草稿 Release，合并生成 latest.json
+# - 手动 Run workflow：可选出包；勾选 create_release 时建草稿 Release
 name: Release packages
 
 on:
@@ -12,8 +12,6 @@ on:
         type: boolean
         default: false
   push:
-    branches:
-      - release
     tags:
       - "v*"
 
@@ -30,10 +28,22 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
+            lang: zh
+            args: ""
+          - platform: windows-latest
+            lang: en
             args: ""
           - platform: macos-latest
+            lang: zh
+            args: "--target universal-apple-darwin"
+          - platform: macos-latest
+            lang: en
             args: "--target universal-apple-darwin"
           - platform: ubuntu-22.04
+            lang: zh
+            args: ""
+          - platform: ubuntu-22.04
+            lang: en
             args: ""
 
     runs-on: ${{ matrix.platform }}
@@ -79,6 +89,34 @@ jobs:
           echo "publish=${publish}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
+      - name: Load release notes
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "::error::缺少 CHANGELOG.md，无法写入升级说明"
+            exit 1
+          fi
+          notes="$(awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" {flag=1; next}
+            flag && /^## \[/ {exit}
+            flag {print}
+          ' CHANGELOG.md | sed 's/\r$//')"
+          stripped="$(printf '%s' "$notes" | tr -d '[:space:]')"
+          if [[ -z "$stripped" ]]; then
+            echo "::error::CHANGELOG.md 缺少版本 ${version} 的说明（需要 ## [${version}] 章节）"
+            exit 1
+          fi
+          delim="NOTES_EOF_${RANDOM}_${RANDOM}"
+          {
+            echo "body<<${delim}"
+            printf '%s\n' "$notes"
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -121,6 +159,13 @@ jobs:
         working-directory: app
         run: npm ci
 
+      - name: Update Tauri Icons from SVG
+        working-directory: app
+        run: npx tauri icon public/logo.svg
+
+      - name: Prepare language config (${{ matrix.lang }})
+        run: node scripts/prepare-lang.mjs ${{ matrix.lang }}
+
       - name: Run Rust tests
         working-directory: app/src-tauri
         run: cargo test
@@ -134,7 +179,8 @@ jobs:
           projectPath: app
           args: ${{ matrix.args }}
           tagName: ${{ steps.meta.outputs.tag }}
-          releaseName: Git 多账号管理器 ${{ steps.meta.outputs.tag }}
+          releaseName: ${{ matrix.lang == 'en' && 'Git Keymaster' || '御钥师' }} ${{ steps.meta.outputs.tag }} (${{ matrix.lang == 'en' && 'English' || '中文版' }})
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           releaseCommitish: release
           includeUpdaterJson: ${{ steps.meta.outputs.publish == 'true' }}
@@ -144,7 +190,7 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: git-account-manager-${{ matrix.platform }}
+          name: keymaster-${{ matrix.platform }}-${{ matrix.lang }}
           path: |
             app/src-tauri/target/release/bundle/**
             app/src-tauri/target/universal-apple-darwin/release/bundle/**

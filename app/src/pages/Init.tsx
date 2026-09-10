@@ -2,8 +2,9 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Cloud, Eye, EyeOff, FolderPlus, Moon, Palette, Sun } from "lucide-react";
 import { api, errMessage, type CloudRestorePreview, type S3Config } from "../lib/ipc";
+import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
-import { AppLogo } from "../ui/AppLogo";
+import { APP_LANG } from "../lib/config";
 
 const CREATE_STEPS = ["选择工作空间", "设置访问密码", "保存恢复密钥", "回填校验", "完成"];
 const RESTORE_STEPS = ["选择工作空间", "云存储", "恢复密钥", "新访问密码", "完成"];
@@ -268,13 +269,20 @@ export function InitWizard() {
     <div className="window">
       <div className="body">
         <aside className="sidebar" style={{ width: 176, flex: "0 0 176px", padding: "10px 8px" }}>
-          <div className="brand" style={{ padding: "4px 6px 12px" }}>
-            <AppLogo size={28} />
-            <div className="name">
-              Git 多账号管理器
-              <small>{mode === "restore" ? "从云端恢复" : "工作空间初始化"}</small>
+          {mode && (
+            <div
+              className="muted"
+              style={{ padding: "6px 8px 10px", fontSize: 12, fontWeight: 600, color: "var(--sidebar-text)" }}
+            >
+              {mode === "restore"
+                ? APP_LANG === "en"
+                  ? "Cloud Restore"
+                  : "从云端恢复"
+                : APP_LANG === "en"
+                  ? "Workspace Init"
+                  : "工作空间初始化"}
             </div>
-          </div>
+          )}
           {mode && (
             <>
               <div className="nav-group">向导步骤</div>
@@ -432,7 +440,7 @@ export function InitWizard() {
                   </div>
                   <div className="reckey">{recovery}</div>
                   <div className="row">
-                    <button type="button" className="btn primary sm" onClick={() => navigator.clipboard.writeText(recovery)}>
+                    <button type="button" className="btn primary sm" onClick={() => writeClipboard(recovery, true)}>
                       复制恢复密钥
                     </button>
                   </div>

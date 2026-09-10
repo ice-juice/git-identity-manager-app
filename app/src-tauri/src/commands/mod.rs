@@ -1,10 +1,15 @@
 //! IPC 命令层：薄封装，仅做参数校验 + 编排 + 结果映射。
 //! **绝不在此写机密逻辑，绝不把私钥/口令/MK 传回前端。**
 
+pub mod accounts;
 pub mod agent;
 pub mod assets;
+pub mod proxy;
 pub mod repo;
+pub mod secrets_ui;
+pub mod security;
 pub mod sync;
+pub mod totp;
 pub mod update;
 pub mod vault;
 pub mod window;
@@ -79,6 +84,8 @@ pub struct AppState {
     pub startup_note: Mutex<Option<String>>,
     /// 更新下载/安装进行中，避免重叠。
     pub update_busy: AtomicBool,
+    /// 查看 OTP/密码的内存级免密窗口到期时刻。
+    pub reveal_grace: Mutex<Option<Instant>>,
 }
 
 impl AppState {
@@ -96,9 +103,50 @@ impl AppState {
             bootstrap_busy: AtomicBool::new(false),
             startup_note: Mutex::new(None),
             update_busy: AtomicBool::new(false),
+            reveal_grace: Mutex::new(None),
         }
     }
 }
+
+pub fn clear_reveal_grace(state: &AppState) {
+    if let Ok(mut g) = state.reveal_grace.lock() {
+        *g = None;
+    }
+}
+
+/// 查看 OTP/密码：窗口内可免密；否则必须 verify_password。
+pub fn ensure_reveal_authorized(state: &AppState, password: Option<&str>) -> crate::error::Result<()> {
+    use crate::error::AppError;
+    let minutes = state.config.lock().unwrap().reveal_grace_minutes;
+    let now = Instant::now();
+    {
+        let g = state.reveal_grace.lock().unwrap();
+        if let Some(until) = *g {
+            if now < until {
+                return Ok(());
+            }
+        }
+    }
+    let Some(pw) = password.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Err(AppError::NeedReauth);
+    };
+    {
+        let vault = state.vault.lock().unwrap();
+        let v = vault.as_ref().ok_or(AppError::Locked)?;
+        if !v.is_unlocked() {
+            return Err(AppError::Locked);
+        }
+        v.verify_password(pw)?;
+    }
+    if minutes > 0 {
+        *state.reveal_grace.lock().unwrap() =
+            Some(now + std::time::Duration::from_secs(u64::from(minutes) * 60));
+    } else {
+        *state.reveal_grace.lock().unwrap() = None;
+    }
+    Ok(())
+}
+
 
 pub fn ensure_writes_allowed(state: &AppState) -> crate::error::Result<()> {
     if state.writes_locked.load(std::sync::atomic::Ordering::SeqCst) {
