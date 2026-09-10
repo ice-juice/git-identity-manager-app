@@ -39,6 +39,7 @@ pub fn restore_from_tray(app: &AppHandle) {
 }
 
 pub fn quit_app(app: &AppHandle, state: &AppState) {
+    lock_in_memory(state);
     state.allow_exit.store(true, Ordering::SeqCst);
     app.exit(0);
 }

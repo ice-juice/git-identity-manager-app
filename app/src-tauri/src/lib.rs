@@ -10,6 +10,7 @@ pub mod git;
 pub mod importer;
 pub mod model;
 pub mod platform;
+pub mod single_instance;
 pub mod ssh;
 pub mod store;
 pub mod sync;
@@ -25,6 +26,13 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 单实例检测：若已有同款程序在运行，弹窗询问是否通知旧实例锁定保险库后退出。
+    // 桌面平台在创建窗口前完成，取消时直接退出、不会闪现界面。
+    #[cfg(desktop)]
+    if let single_instance::Decision::Exit = single_instance::check() {
+        std::process::exit(0);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
@@ -121,6 +129,14 @@ pub fn run() {
         ])
         .setup(|app| {
             tray::install(app.handle())?;
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                crate::single_instance::on_ready(move || {
+                    let state = handle.state::<AppState>();
+                    crate::commands::window::quit_app(&handle, &state);
+                });
+            }
             crate::sync::scheduler::start(app.handle().clone());
             crate::update::scheduler::start(app.handle().clone());
             commands::agent::bootstrap_git_agent(app.handle());
@@ -151,6 +167,13 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            // 应用退出时释放单实例锁（各退出路径最终都会触发 Exit）
+            if let tauri::RunEvent::Exit = event {
+                #[cfg(desktop)]
+                crate::single_instance::release_lock();
+            }
+        });
 }
