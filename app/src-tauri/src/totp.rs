@@ -234,6 +234,7 @@ mod tests {
             sort_order: 0,
             created_at: String::new(),
             updated_at: String::new(),
+            has_seed: true,
         };
         let uri = build_otpauth(&entry, &parsed.secret);
         let again = parse_otpauth(&uri).unwrap();

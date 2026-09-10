@@ -88,18 +88,26 @@ fn ready_env(state: &State<AppState>) -> Result<crate::agent::AgentEnv> {
 }
 
 /// 启动时只拉起 Git ssh-agent，不改用户环境变量（写入必须经前端二次确认）。
+/// 必须在后台线程执行：`ssh-add`/`ssh-agent` 在异常套接字上可能长时间不返回，
+/// 放在 Tauri setup 主线程会冻住窗口消息泵，表现为白屏 +「未响应」。
 pub fn bootstrap_git_agent(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    match agent::ensure() {
-        Ok(env) => {
-            *state.agent_env.lock().unwrap() = env.clone();
-            log::info!(
-                "Git ssh-agent 已就绪：sock={}",
-                env.auth_sock.as_deref().unwrap_or("-")
-            );
-        }
-        Err(e) => log::warn!("启动 Git ssh-agent 失败：{e}"),
-    }
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("gam-agent-bootstrap".into())
+        .spawn(move || {
+            match agent::ensure() {
+                Ok(env) => {
+                    let state = app.state::<AppState>();
+                    *state.agent_env.lock().unwrap() = env.clone();
+                    log::info!(
+                        "Git ssh-agent 已就绪：sock={}",
+                        env.auth_sock.as_deref().unwrap_or("-")
+                    );
+                }
+                Err(e) => log::warn!("启动 Git ssh-agent 失败：{e}"),
+            }
+        })
+        .ok();
 }
 
 /// 写入 git config / 用户环境 / 终端 profile。`confirmed` 必须为 true。
@@ -111,6 +119,15 @@ pub fn agent_unify_env(state: State<AppState>, confirmed: bool) -> Result<unify:
         ));
     }
     let env = ready_env(&state)?;
+    let sock = env
+        .auth_sock
+        .as_deref()
+        .ok_or_else(|| AppError::Other("Git ssh-agent 尚未运行，请先点「确保运行」。".into()))?;
+    if !agent::auth_sock_target_exists(sock) {
+        return Err(AppError::Other(
+            "SSH_AUTH_SOCK 指向的套接字不存在，已拒绝写入用户环境。请先点「确保运行」。".into(),
+        ));
+    }
     unify::apply(&env)
 }
 

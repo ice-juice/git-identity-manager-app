@@ -151,6 +151,9 @@ pub struct TotpEntry {
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
+    /// 仅列表展示：种子是否还在 secrets 里。不落盘。
+    #[serde(default, skip)]
+    pub has_seed: bool,
 }
 
 /// 一个隐私账号（元数据；密码单独存 Secrets）。
@@ -172,6 +175,9 @@ pub struct AccountEntry {
     pub last_used_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 仅列表展示：密码是否还在 secrets 里。不落盘。
+    #[serde(default, skip)]
+    pub has_password: bool,
 }
 
 /// 分组元数据。
@@ -719,6 +725,7 @@ mod tests {
             sort_order: 0,
             created_at: updated_at.into(),
             updated_at: updated_at.into(),
+            has_seed: false,
         }
     }
 

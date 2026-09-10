@@ -4,8 +4,8 @@ import { clearClipboard, writeClipboard } from "./clipboard";
 const customCache = new Map<string, string>();
 let clearTimer: number | null = null;
 
-export async function copyWithClear(text: string, seconds?: number) {
-  await writeClipboard(text);
+export async function copyWithClear(text: string, seconds?: number, secret = true) {
+  const result = await writeClipboard(text, secret);
   let wait = seconds;
   if (wait === undefined) {
     try {
@@ -24,6 +24,7 @@ export async function copyWithClear(text: string, seconds?: number) {
       clearClipboard().catch(() => {});
     }, wait * 1000);
   }
+  return result;
 }
 
 export function isNeedReauth(e: unknown): boolean {

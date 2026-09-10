@@ -52,12 +52,14 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
+      // 先拉状态画出解锁/主界面，再做静默解锁，避免首屏卡在「加载中」。
+      await refresh();
       try {
-        await api.vaultTryGraceUnlock();
+        const ok = await api.vaultTryGraceUnlock();
+        if (ok) await refresh();
       } catch {
         /* 无会话或已过期，走正常解锁 */
       }
-      await refresh();
     })();
   }, [refresh]);
 

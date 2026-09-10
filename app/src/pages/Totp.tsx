@@ -163,12 +163,21 @@ export function TotpPage() {
 
   async function confirmSecret(pw: string) {
     if (!secretDlg) return;
-    const [sec, qr] = await Promise.all([api.totpRevealSecret(secretDlg.id, pw), api.totpExportQr(secretDlg.id, pw)]);
-    setSecretDlg({ id: secretDlg.id, secret: sec.secretBase32, uri: sec.otpauthUri, qr });
+    const sec = await api.totpRevealSecret(secretDlg.id, pw);
+    setSecretDlg({
+      id: secretDlg.id,
+      secret: sec.secretBase32,
+      uri: sec.otpauthUri,
+      qr: sec.qrPngBase64,
+    });
   }
 
   async function saveEditor() {
     if (!editor) return;
+    if (editor.id && editor.hasSeed === false && !editor.secret?.trim()) {
+      setErr("这条记录的种子已丢失，请重新填入密钥或 otpauth 链接。");
+      return;
+    }
     setBusy(true);
     try {
       const group = resolveGroupName(groups, editor.group);
@@ -347,6 +356,7 @@ export function TotpPage() {
         <div className="totp-list-card">
           {filtered.map((e) => {
             const shown = codes[e.id];
+            const seedMissing = e.hasSeed === false;
             const isCopied = copiedId === e.id;
             return (
               <div key={e.id} className="totp-list-row">
@@ -411,7 +421,8 @@ export function TotpPage() {
                   <button
                     type="button"
                     className={"btn sm " + (isCopied ? "good" : "primary")}
-                    title="复制验证码"
+                    title={seedMissing ? "种子已丢失" : "复制验证码"}
+                    disabled={seedMissing}
                     onClick={() => copyCode(e.id)}
                   >
                     {isCopied ? <Check size={12} /> : <Copy size={12} />}
@@ -435,7 +446,8 @@ export function TotpPage() {
                   <button
                     type="button"
                     className="btn sm"
-                    title="密钥 / 二维码"
+                    title={seedMissing ? "种子已丢失，无法取回" : "密钥 / 二维码"}
+                    disabled={seedMissing}
                     onClick={() => openSecret(e.id)}
                   >
                     <KeyRound size={12} />
@@ -505,7 +517,7 @@ export function TotpPage() {
             <div className="card-head"><div className="card-title">取回原始密钥</div></div>
             <div className="card-body stack">
               {!secretDlg.secret ? (
-                <ReauthInner hint="导出种子不吃免密时效，必须重新验证。" onConfirm={confirmSecret} onCancel={() => setSecretDlg(null)} />
+                <ReauthInner hint="导出种子不走免密时效，必须重新输入访问密码。" onConfirm={confirmSecret} onCancel={() => setSecretDlg(null)} />
               ) : (
                 <>
                   {secretDlg.qr && <img alt="otpauth qr" src={`data:image/png;base64,${secretDlg.qr}`} style={{ width: 180, height: 180, margin: "0 auto", display: "block" }} />}
@@ -584,6 +596,7 @@ function TotpCard({
   onDelete: () => void;
   locked: boolean;
 }) {
+  const seedMissing = e.hasSeed === false;
   return (
     <div className="totp-card">
       <div className="totp-card-head">
@@ -618,6 +631,10 @@ function TotpCard({
         </div>
       </div>
 
+      {seedMissing && (
+        <div className="callout danger sm">种子已丢失，请编辑并重新填入密钥，或删除后重新导入。</div>
+      )}
+
       <div
         className={"totp-code-box" + (shown ? " revealed" : "")}
         title={shown ? "点击快捷复制验证码" : undefined}
@@ -634,6 +651,7 @@ function TotpCard({
             <button
               type="button"
               className="btn sm primary"
+              disabled={seedMissing}
               onClick={(ev) => {
                 ev.stopPropagation();
                 onReveal();
@@ -650,6 +668,7 @@ function TotpCard({
           type="button"
           className={"btn sm " + (copied ? "good" : "primary")}
           style={{ flex: 1 }}
+          disabled={seedMissing}
           onClick={onCopy}
         >
           {copied ? (
@@ -675,7 +694,8 @@ function TotpCard({
         <button
           type="button"
           className="btn sm"
-          title="取回原始密钥或导出二维码"
+          title={seedMissing ? "种子已丢失，无法取回" : "取回原始密钥或导出二维码"}
+          disabled={seedMissing || locked}
           onClick={onSecret}
         >
           <KeyRound size={13} />
@@ -785,12 +805,12 @@ function Editor({
 
   return (
     <div className="wizard-overlay">
-      <div className="card totp-editor" style={{ width: 520, maxWidth: "96vw" }}>
+      <div className="card totp-editor dialog-card">
         <div className="card-head"><div className="card-title">{value.id ? "编辑 TOTP" : "添加 TOTP"}</div></div>
         <div className="card-body stack">
           <div className="field">
             <FieldLabel
-              name={value.id ? "更换密钥（可选）" : "密钥"}
+              name={value.id ? (value.hasSeed === false ? "重新填入密钥（必填）" : "更换密钥（可选）") : "密钥"}
               tip="otpauth 链接和 Base32 密钥只需填一种。粘贴后会自动识别：链接会顺带填好平台、账号和算法；密钥则只需再补平台和账号。"
             />
             <textarea
@@ -903,7 +923,10 @@ function Editor({
             </div>
           )}
 
-          <div className="row" style={{ justifyContent: "flex-end" }}>
+        </div>
+        <div className="card-foot">
+          <span />
+          <div className="row">
             <button type="button" className="btn ghost sm" onClick={onClose}>取消</button>
             <button type="button" className="btn primary sm" disabled={busy} onClick={onSave}>保存</button>
           </div>

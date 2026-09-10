@@ -796,12 +796,14 @@ fn pull_from_cloud_inner(
     } else {
         local_totp.clone()
     };
-    store::save_totp(vault, &merged_totp)?;
     let merged_acc = if let Some(remote_acc) = remote_account_snap.clone() {
         crate::model::merge_account_data(local_acc.clone(), remote_acc)
     } else {
         local_acc.clone()
     };
+    // 先落机密再落条目，避免列表已可见但种子还在旧 secrets.enc 上。
+    store::save_secrets(vault, &current_secrets)?;
+    store::save_totp(vault, &merged_totp)?;
     store::save_accounts(vault, &merged_acc)?;
     for key_id in &pulled_key_ids {
         if let (Some(key_rec), Ok(raw)) = (
@@ -824,7 +826,6 @@ fn pull_from_cloud_inner(
     }
 
     store::save_data(vault, &current_data)?;
-    store::save_secrets(vault, &current_secrets)?;
     let ssh_now = read_ssh_config_bytes(vault).unwrap_or_default();
     let remote_hash = match remote_data_snap {
         Some(rd) => Some(stable_state_hash(

@@ -240,6 +240,7 @@ pub fn import_backup(
         Some(&current_acc),
         Some(&payload.account_data),
     );
+    store::save_secrets(vault, &current_secrets)?;
     store::save_totp(vault, &crate::model::merge_totp_data(current_totp, payload.totp_data.clone()))?;
     store::save_accounts(
         vault,
@@ -290,7 +291,6 @@ pub fn import_backup(
         repo.machine_id = machine_id.clone();
     }
     store::save_data(vault, &current_data)?;
-    store::save_secrets(vault, &current_secrets)?;
 
     // 自动部署私钥到工作空间 ssh-keys/ 目录下，保证 OpenSSH 能立刻识别使用
     for key in &current_data.keys {

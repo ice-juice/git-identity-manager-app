@@ -7,6 +7,7 @@ pub mod assets;
 pub mod proxy;
 pub mod repo;
 pub mod secrets_ui;
+pub mod security;
 pub mod sync;
 pub mod totp;
 pub mod update;

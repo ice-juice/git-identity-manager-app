@@ -699,8 +699,35 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
 
 .wizard-overlay {
   position: fixed; inset: 0; z-index: 40;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(4px); padding: 10px;
+  display: flex; align-items: safe center; justify-content: safe center;
+  background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(4px); padding: 12px;
+  overflow: auto;
+}
+.dialog-card {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(92vh, 760px);
+  overflow: hidden;
+}
+.dialog-card > .card-head,
+.dialog-card > .card-foot {
+  flex: 0 0 auto;
+}
+.dialog-card > .card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 .choice-row { display: flex; gap: 5px; flex-wrap: wrap; }
 .choice {

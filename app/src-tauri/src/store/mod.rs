@@ -279,6 +279,7 @@ mod tests {
             sort_order: 0,
             created_at: "now".into(),
             updated_at: "now".into(),
+            has_seed: false,
         });
         save_totp(&v, &data).unwrap();
         let raw = std::fs::read(totp_path(&v)).unwrap();

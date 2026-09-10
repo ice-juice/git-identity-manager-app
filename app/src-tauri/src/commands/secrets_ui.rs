@@ -1,29 +1,48 @@
 //! 免密查看时效、剪贴板清空、图标上传。
 
 use crate::app_config;
+use crate::clipboard;
 use crate::commands::{ensure_writes_allowed, AppState};
 use crate::error::{AppError, Result};
 use crate::icons::{self, BuiltinIconInfo, CustomIconInfo};
 use crate::store;
 use serde::Serialize;
 use tauri::State;
+use zeroize::Zeroize;
 
 fn clipboard_err(e: impl ToString) -> AppError {
     AppError::Other(format!("剪贴板操作失败：{}", e.to_string()))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardWriteResult {
+    pub excluded: bool,
+    pub fallback: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
+}
+
 #[tauri::command]
-pub fn clipboard_write(text: String) -> Result<()> {
-    arboard::Clipboard::new()
-        .and_then(|mut cb| cb.set_text(text))
-        .map_err(clipboard_err)
+pub fn clipboard_write(mut text: String, secret: Option<bool>) -> Result<ClipboardWriteResult> {
+    let secret = secret.unwrap_or(false);
+    let outcome = clipboard::write(&text, secret);
+    text.zeroize();
+    let outcome = outcome.map_err(clipboard_err)?;
+    Ok(ClipboardWriteResult {
+        excluded: outcome.excluded,
+        fallback: outcome.fallback,
+        notice: if outcome.fallback {
+            Some("剪贴板正被其他程序占用，已改为普通复制；本次内容可能进入剪贴板历史。".into())
+        } else {
+            None
+        },
+    })
 }
 
 #[tauri::command]
 pub fn clipboard_clear() -> Result<()> {
-    arboard::Clipboard::new()
-        .and_then(|mut cb| cb.clear())
-        .map_err(clipboard_err)
+    clipboard::clear_if_ours().map_err(clipboard_err)
 }
 
 #[derive(Serialize)]

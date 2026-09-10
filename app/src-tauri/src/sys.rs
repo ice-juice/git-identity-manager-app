@@ -2,7 +2,10 @@
 
 use crate::error::{AppError, Result};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// GUI 进程里隐藏子进程控制台窗口，避免 `ssh-add`/`sc` 闪黑框。
 pub fn hide_console(cmd: &mut Command) {
@@ -16,17 +19,83 @@ pub fn hide_console(cmd: &mut Command) {
 
 /// 运行外部命令，返回 (stdout, stderr, exit_code)。stdout/stderr 按 UTF-8 有损解码。
 pub fn run(exe: &str, args: &[&str]) -> Result<(String, String, i32)> {
+    run_timeout(exe, args, Duration::from_secs(30))
+}
+
+/// 带超时的外部命令。超时后杀掉进程树，避免 ssh-agent / ssh-add 挂死调用方。
+pub fn run_timeout(exe: &str, args: &[&str], timeout: Duration) -> Result<(String, String, i32)> {
+    run_timeout_with_env(exe, args, timeout, &[])
+}
+
+/// 与 [`run_timeout`] 相同，额外注入环境变量（如 `ssh-agent -k` 需要 PID）。
+pub fn run_timeout_with_env(
+    exe: &str,
+    args: &[&str],
+    timeout: Duration,
+    extra_env: &[(&str, &str)],
+) -> Result<(String, String, i32)> {
     let mut cmd = Command::new(exe);
-    cmd.args(args);
+    cmd.args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
     hide_console(&mut cmd);
-    let output = cmd
-        .output()
+    let child = cmd
+        .spawn()
         .map_err(|e| AppError::Io(format!("执行 {exe} 失败：{e}")))?;
+    wait_output_timeout(child, timeout, exe)
+}
+
+/// 按 Windows/本机 PID 杀掉进程树。MSYS 的 `SSH_AGENT_PID` 不能直接拿来用。
+pub fn kill_pid(pid: u32) {
+    kill_process_tree(pid);
+}
+
+/// 等待已启动子进程结束；超时则杀掉进程树。
+pub fn wait_output_timeout(
+    child: Child,
+    timeout: Duration,
+    label: &str,
+) -> Result<(String, String, i32)> {
+    let pid = child.id();
+    let finished = Arc::new(AtomicBool::new(false));
+    let flag = finished.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(timeout);
+        if !flag.load(Ordering::SeqCst) {
+            kill_process_tree(pid);
+        }
+    });
+    let output = child
+        .wait_with_output()
+        .map_err(|e| AppError::Io(format!("等待 {label} 失败：{e}")))?;
+    finished.store(true, Ordering::SeqCst);
     Ok((
         String::from_utf8_lossy(&output.stdout).to_string(),
         String::from_utf8_lossy(&output.stderr).to_string(),
         output.status.code().unwrap_or(-1),
     ))
+}
+
+fn kill_process_tree(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        hide_console(&mut cmd);
+        let _ = cmd.output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
 }
 
 /// 运行命令并把内容写到 stdin。

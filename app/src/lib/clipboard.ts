@@ -1,16 +1,22 @@
-import { api } from "./ipc";
+import { api, type ClipboardWriteResult } from "./ipc";
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** 走系统剪贴板，避免 WebView 弹出 localhost 权限框。 */
-export async function writeClipboard(text: string) {
+const PLAIN: ClipboardWriteResult = { excluded: false, fallback: false };
+
+/** 走系统剪贴板，避免 WebView 弹出 localhost 权限框。机密路径传 `secret: true`。 */
+export async function writeClipboard(text: string, secret = false): Promise<ClipboardWriteResult> {
   if (isTauri()) {
-    await api.clipboardWrite(text);
-    return;
+    const result = await api.clipboardWrite(text, secret);
+    if (result.notice) {
+      console.warn(result.notice);
+    }
+    return result;
   }
   await navigator.clipboard.writeText(text);
+  return PLAIN;
 }
 
 export async function clearClipboard() {

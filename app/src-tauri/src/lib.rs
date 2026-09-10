@@ -3,8 +3,10 @@
 pub mod agent;
 pub mod app_config;
 pub mod autostart;
+mod clipboard;
 pub mod commands;
 pub mod session;
+pub mod security;
 pub mod error;
 pub mod git;
 pub mod icons;
@@ -30,6 +32,13 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    {
+        // 默认不要 --disable-gpu：白屏根因是主线程堵在 ssh-agent，强制软件渲染只掉帧。
+        // 仅当 GAM_DISABLE_GPU=1 时附加，作为兼容性兜底。必须在创建 WebView 之前设置。
+        apply_webview2_additional_args();
+    }
+
     // 单实例检测：若已有同款程序在运行，弹窗询问是否通知旧实例锁定保险库后退出。
     // 桌面平台在创建窗口前完成，取消时直接退出、不会闪现界面。
     #[cfg(desktop)]
@@ -56,6 +65,7 @@ pub fn run() {
             commands::vault::set_launch_at_login,
             commands::vault::set_grace_days,
             commands::vault::factory_reset,
+            commands::security::security_checklist,
             commands::assets::read_ssh_config,
             commands::assets::open_ssh_config,
             commands::assets::scan_keys,
@@ -215,4 +225,68 @@ pub fn run() {
                 crate::single_instance::release_lock();
             }
         });
+}
+
+/// 仅 `GAM_DISABLE_GPU=1` 时附加软件渲染参数；debug 保留远程调试端口。
+fn webview2_extra_browser_args(disable_gpu: bool, debug: bool) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if disable_gpu {
+        parts.push("--disable-gpu");
+        parts.push("--disable-gpu-compositing");
+    }
+    if debug {
+        parts.push("--remote-debugging-port=9222");
+    }
+    parts.join(" ")
+}
+
+#[cfg(windows)]
+fn apply_webview2_additional_args() {
+    let extra = webview2_extra_browser_args(
+        matches!(std::env::var("GAM_DISABLE_GPU").ok().as_deref(), Some("1")),
+        cfg!(debug_assertions),
+    );
+    if extra.is_empty() {
+        return;
+    }
+    match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+        Ok(existing) if !existing.trim().is_empty() => {
+            let mut merged = existing;
+            for flag in extra.split_whitespace() {
+                if !merged.split_whitespace().any(|e| e == flag) {
+                    merged.push(' ');
+                    merged.push_str(flag);
+                }
+            }
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", merged);
+        }
+        _ => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", extra),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::webview2_extra_browser_args;
+
+    #[test]
+    fn webview2_args_default_has_no_disable_gpu() {
+        assert_eq!(webview2_extra_browser_args(false, false), "");
+        assert_eq!(
+            webview2_extra_browser_args(false, true),
+            "--remote-debugging-port=9222"
+        );
+        assert!(!webview2_extra_browser_args(false, true).contains("--disable-gpu"));
+    }
+
+    #[test]
+    fn webview2_args_gpu_only_when_requested() {
+        assert_eq!(
+            webview2_extra_browser_args(true, false),
+            "--disable-gpu --disable-gpu-compositing"
+        );
+        assert_eq!(
+            webview2_extra_browser_args(true, true),
+            "--disable-gpu --disable-gpu-compositing --remote-debugging-port=9222"
+        );
+    }
 }

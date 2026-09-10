@@ -7,8 +7,8 @@ import { useApp } from "../store";
 
 type Copied = "" | "pub" | "priv" | "pass";
 
-async function copyKeyText(text: string) {
-  await writeClipboard(text.replace(/\r\n/g, "\n").trim() + "\n");
+async function copyKeyText(text: string, secret = false) {
+  await writeClipboard(text.replace(/\r\n/g, "\n").trim() + "\n", secret);
 }
 
 export function Keys() {
@@ -244,7 +244,7 @@ function KeyViewDialog({ record, onClose }: { record: KeyRecord; onClose: () => 
 
   async function copy(which: Copied, text: string) {
     if (!text.trim()) return;
-    await copyKeyText(text);
+    await copyKeyText(text, which !== "pub");
     markCopied(which);
   }
 

@@ -11,7 +11,8 @@ use crate::store;
 use crate::sys;
 use crate::vault::Vault;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 pub mod unify;
 
@@ -138,32 +139,49 @@ fn git_ssh_agent() -> Option<PathBuf> {
     sibling_of("git", &ssh_exe_name("ssh-agent"))
 }
 
+/// 探测套接字上限：mtime 倒序最多试这么多个，避免残留文件把启动拖成 N × 超时。
+const MAX_PROBE_CANDIDATES: usize = 3;
+const STALE_SOCKET_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 /// 固定套接字，供终端与本进程共用同一只 Git ssh-agent。
 pub fn stable_git_sock_path() -> PathBuf {
-    sys::home_dir().join(".ssh").join("agent").join("git-account-manager")
+    git_agent_dir().join("git-account-manager")
+}
+
+fn git_agent_dir() -> PathBuf {
+    sys::home_dir().join(".ssh").join("agent")
 }
 
 fn stable_git_pid_path() -> PathBuf {
-    sys::home_dir().join(".ssh").join("agent").join("git-account-manager.pid")
+    git_agent_dir().join("git-account-manager.pid")
 }
 
-fn persist_git_agent_meta(env: &AgentEnv) {
-    if let Some(pid) = &env.agent_pid {
-        if let Some(parent) = stable_git_pid_path().parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(stable_git_pid_path(), pid);
+fn persist_git_agent_meta(env: &AgentEnv, winpid: Option<u32>) {
+    let Some(pid) = &env.agent_pid else {
+        return;
+    };
+    let winpid = winpid.or_else(|| parse_pid_file(&std::fs::read_to_string(stable_git_pid_path()).unwrap_or_default()).1);
+    if let Some(parent) = stable_git_pid_path().parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
+    let mut body = pid.clone();
+    if let Some(w) = winpid {
+        body.push('\n');
+        body.push_str(&w.to_string());
+    }
+    let _ = std::fs::write(stable_git_pid_path(), body);
 }
 
 fn read_stable_pid() -> Option<String> {
-    let raw = std::fs::read_to_string(stable_git_pid_path()).ok()?;
-    let pid = raw.trim();
-    if pid.is_empty() {
-        None
-    } else {
-        Some(pid.to_string())
-    }
+    parse_pid_file(&std::fs::read_to_string(stable_git_pid_path()).ok()?).0
+}
+
+/// pid 文件：首行是 MSYS `SSH_AGENT_PID`，可选第二行是 Windows PID（供回收）。
+fn parse_pid_file(raw: &str) -> (Option<String>, Option<u32>) {
+    let mut lines = raw.lines().map(str::trim).filter(|l| !l.is_empty());
+    let msys = lines.next().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()));
+    let win = lines.next().and_then(|s| s.parse().ok());
+    (msys.map(|s| s.to_string()), win)
 }
 
 fn git_agent_env(sock: String, pid: Option<String>) -> Option<AgentEnv> {
@@ -295,14 +313,18 @@ fn is_agent_unreachable(hint: &str) -> bool {
 /// 统一使用 Git 自带 ssh-agent：先复用固定套接字，没有再启动。
 pub fn ensure() -> Result<AgentEnv> {
     if let Some(env) = probe_existing_git_agent() {
-        persist_git_agent_meta(&env);
+        persist_git_agent_meta(&env, None);
+        cleanup_stale_agent_sockets(env.auth_sock.as_deref());
         return Ok(env);
     }
+    clear_stale_managed_auth_sock();
+    recycle_previous_git_agent();
+    cleanup_stale_agent_sockets(None);
     start_git_agent()
 }
 
 /// 把 Windows 路径转成 Git/MSYS 的 `SSH_AUTH_SOCK` 形式：`C:\Users\a` → `/c/Users/a`。
-pub fn to_msys_sock_path(path: &std::path::Path) -> String {
+pub fn to_msys_sock_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     let s = raw.replace('\\', "/");
     if s.len() >= 2 && s.as_bytes().get(1) == Some(&b':') {
@@ -312,33 +334,107 @@ pub fn to_msys_sock_path(path: &std::path::Path) -> String {
     s
 }
 
-fn probe_existing_git_agent() -> Option<AgentEnv> {
-    let mut socks = Vec::new();
-    let stable = stable_git_sock_path();
-    if stable.exists() {
-        socks.push(to_msys_sock_path(&stable));
+/// `/c/Users/a` → `C:\Users\a`；已是 Windows 路径则只统一分隔符。
+pub fn from_msys_sock_path(sock: &str) -> PathBuf {
+    let s = sock.trim().replace('\\', "/");
+    let bytes = s.as_bytes();
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[2] == b'/' && bytes[1].is_ascii_alphabetic() {
+        let drive = (bytes[1] as char).to_ascii_uppercase();
+        let rest = s[3..].replace('/', std::path::MAIN_SEPARATOR_STR);
+        return PathBuf::from(format!("{drive}:{sep}{rest}", sep = std::path::MAIN_SEPARATOR));
     }
-    if let Ok(existing) = std::env::var("SSH_AUTH_SOCK") {
-        if !existing.trim().is_empty() && !socks.contains(&existing) {
-            socks.push(existing);
+    PathBuf::from(sock.trim().replace('/', std::path::MAIN_SEPARATOR_STR))
+}
+
+fn normalized_sock(sock: &str) -> String {
+    sock.trim().replace('\\', "/").to_ascii_lowercase()
+}
+
+fn socks_eq(a: &str, b: &str) -> bool {
+    normalized_sock(a) == normalized_sock(b)
+}
+
+/// 是否为本程序写过的 `~/.ssh/agent/...` 套接字（不含 `agent-xxx` 其它目录）。
+pub fn is_managed_agent_sock(sock: &str) -> bool {
+    normalized_sock(sock).contains("/.ssh/agent/")
+}
+
+/// `SSH_AUTH_SOCK` 指向的文件是否存在（MSYS 与 Windows 路径都认）。
+pub fn auth_sock_target_exists(sock: &str) -> bool {
+    if sock.trim().is_empty() {
+        return false;
+    }
+    from_msys_sock_path(sock).exists()
+}
+
+/// 探测失败时：只清我们写入的随机/陈旧路径，不动用户其它合法 sock，也不清固定套接字名。
+fn should_clear_managed_auth_sock(sock: &str, stable_msys: &str) -> bool {
+    is_managed_agent_sock(sock) && !socks_eq(sock, stable_msys)
+}
+
+/// 按 mtime 倒序选出最多 `limit` 个待探测套接字。`prefer` 若有则固定占第一位并计入上限。
+pub(crate) fn select_probe_socks(
+    prefer: Option<&str>,
+    mut others: Vec<(String, Option<SystemTime>)>,
+    limit: usize,
+) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    others.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut out = Vec::new();
+    if let Some(p) = prefer {
+        if !p.trim().is_empty() {
+            out.push(p.to_string());
         }
     }
-    let dir = sys::home_dir().join(".ssh").join("agent");
+    for (sock, _) in others {
+        if out.len() >= limit {
+            break;
+        }
+        if !out.iter().any(|s| socks_eq(s, &sock)) {
+            out.push(sock);
+        }
+    }
+    out
+}
+
+fn probe_existing_git_agent() -> Option<AgentEnv> {
+    let dir = git_agent_dir();
+    let stable = stable_git_sock_path();
+    let prefer = if stable.exists() {
+        Some(to_msys_sock_path(&stable))
+    } else {
+        None
+    };
+    let mut others: Vec<(String, Option<SystemTime>)> = Vec::new();
+    if let Ok(existing) = std::env::var("SSH_AUTH_SOCK") {
+        let existing = existing.trim().to_string();
+        if !existing.is_empty() && auth_sock_target_exists(&existing) {
+            let mtime = std::fs::metadata(from_msys_sock_path(&existing))
+                .and_then(|m| m.modified())
+                .ok();
+            others.push((existing, mtime));
+        }
+    }
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for entry in rd.flatten() {
             let p = entry.path();
             if p.extension().and_then(|e| e.to_str()) == Some("pid") {
                 continue;
             }
-            if p.exists() {
-                let sock = to_msys_sock_path(&p);
-                if !socks.contains(&sock) {
-                    socks.push(sock);
-                }
+            if !p.exists() {
+                continue;
             }
+            let sock = to_msys_sock_path(&p);
+            if prefer.as_deref().is_some_and(|s| socks_eq(s, &sock)) {
+                continue;
+            }
+            let mtime = entry.metadata().and_then(|m| m.modified()).ok();
+            others.push((sock, mtime));
         }
     }
-    for sock in socks {
+    for sock in select_probe_socks(prefer.as_deref(), others, MAX_PROBE_CANDIDATES) {
         if let Some(env) = git_agent_env(sock, None) {
             if list(&env).is_ok() {
                 return Some(env);
@@ -346,6 +442,142 @@ fn probe_existing_git_agent() -> Option<AgentEnv> {
         }
     }
     None
+}
+
+fn clear_stale_managed_auth_sock() {
+    let stable = to_msys_sock_path(&stable_git_sock_path());
+    let proc = std::env::var("SSH_AUTH_SOCK").ok();
+    let user = user_env_var("SSH_AUTH_SOCK");
+    let clear_proc = proc
+        .as_deref()
+        .is_some_and(|s| should_clear_managed_auth_sock(s, &stable));
+    let clear_user = user
+        .as_deref()
+        .is_some_and(|s| should_clear_managed_auth_sock(s, &stable));
+    if clear_proc {
+        std::env::remove_var("SSH_AUTH_SOCK");
+        std::env::remove_var("SSH_AGENT_PID");
+    }
+    if clear_user {
+        delete_user_env_var("SSH_AUTH_SOCK");
+        delete_user_env_var("SSH_AGENT_PID");
+    }
+}
+
+fn recycle_previous_git_agent() {
+    let raw = std::fs::read_to_string(stable_git_pid_path()).unwrap_or_default();
+    let (msys, win) = parse_pid_file(&raw);
+    if let Some(winpid) = win {
+        if winpid != 0 && winpid != std::process::id() {
+            sys::kill_pid(winpid);
+        }
+    } else if let Some(pid) = msys {
+        if let Some(exe) = git_ssh_agent() {
+            let sock = to_msys_sock_path(&stable_git_sock_path());
+            let _ = sys::run_timeout_with_env(
+                &exe.display().to_string(),
+                &["-k", "-s"],
+                Duration::from_secs(8),
+                &[("SSH_AGENT_PID", &pid), ("SSH_AUTH_SOCK", &sock)],
+            );
+        }
+    }
+    let _ = std::fs::remove_file(stable_git_pid_path());
+    let _ = std::fs::remove_file(stable_git_sock_path());
+}
+
+fn cleanup_stale_agent_sockets(keep_sock: Option<&str>) {
+    let dir = git_agent_dir();
+    let keep = keep_sock.map(from_msys_sock_path);
+    let pid_path = stable_git_pid_path();
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p == pid_path {
+            continue;
+        }
+        if keep.as_ref().is_some_and(|k| k == &p) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let Ok(mtime) = meta.modified() else {
+            continue;
+        };
+        let Ok(age) = mtime.elapsed() else {
+            continue;
+        };
+        if age <= STALE_SOCKET_MAX_AGE {
+            continue;
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+}
+
+#[cfg(windows)]
+fn user_env_var(name: &str) -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu.open_subkey("Environment").ok()?;
+    key.get_value::<String, _>(name)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
+#[cfg(not(windows))]
+fn user_env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|s| !s.trim().is_empty())
+}
+
+#[cfg(windows)]
+fn delete_user_env_var(name: &str) {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+    use winreg::RegKey;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey_with_flags("Environment", KEY_SET_VALUE) {
+        let _ = key.delete_value(name);
+    }
+}
+
+#[cfg(not(windows))]
+fn delete_user_env_var(_name: &str) {}
+
+fn parse_tasklist_ssh_agent_pids(output: &str) -> Vec<u32> {
+    let mut pids = Vec::new();
+    for line in output.lines() {
+        let cols: Vec<&str> = line
+            .split(',')
+            .map(|s| s.trim().trim_matches('"'))
+            .collect();
+        if cols.len() >= 2 && cols[0].to_ascii_lowercase().contains("ssh-agent") {
+            if let Ok(pid) = cols[1].parse() {
+                pids.push(pid);
+            }
+        }
+    }
+    pids
+}
+
+fn list_ssh_agent_winpids() -> Vec<u32> {
+    #[cfg(windows)]
+    {
+        let Ok((out, _, _)) = sys::run_timeout(
+            "tasklist",
+            &["/FI", "IMAGENAME eq ssh-agent.exe", "/FO", "CSV", "/NH"],
+            Duration::from_secs(3),
+        ) else {
+            return Vec::new();
+        };
+        return parse_tasklist_ssh_agent_pids(&out);
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
 }
 
 fn run_ssh_add(env: &AgentEnv, args: &[&str], stdin: Option<&[u8]>) -> Result<(String, String, i32)> {
@@ -366,41 +598,41 @@ fn run_ssh_add(env: &AgentEnv, args: &[&str], stdin: Option<&[u8]>) -> Result<(S
         use std::io::Write;
         si.write_all(data).map_err(|e| AppError::Io(e.to_string()))?;
     }
-    let out = child.wait_with_output().map_err(|e| AppError::Io(e.to_string()))?;
-    Ok((
-        String::from_utf8_lossy(&out.stdout).to_string(),
-        String::from_utf8_lossy(&out.stderr).to_string(),
-        out.status.code().unwrap_or(-1),
-    ))
+    sys::wait_output_timeout(child, Duration::from_secs(8), "ssh-add")
 }
 
 /// 启动 Git 自带 ssh-agent，并绑到 `~/.ssh/agent/git-account-manager`。
+///
+/// 本机 Git for Windows（OpenSSH 10.5p1）实测：`-a /c/Users/.../git-account-manager`
+/// 会把套接字落到该文件，并在 `-s` 输出里回显同一路径。不再回退到无 `-a` 的
+/// `ssh-agent -s`——那会在目录里留下 `s.*.agent.*` 随机套接字，复用从未生效。
 pub fn start_git_agent() -> Result<AgentEnv> {
     let ssh = git_ssh().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh。请先安装 Git for Windows。".into()))?;
     let exe = git_ssh_agent().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-agent。请先安装 Git for Windows。".into()))?;
     let add = git_ssh_add().ok_or_else(|| AppError::Other("未找到 Git 自带 ssh-add。请先安装 Git for Windows。".into()))?;
-    let sock_dir = sys::home_dir().join(".ssh").join("agent");
-    std::fs::create_dir_all(&sock_dir).map_err(|e| AppError::Io(e.to_string()))?;
+    std::fs::create_dir_all(git_agent_dir()).map_err(|e| AppError::Io(e.to_string()))?;
     let sock_path = stable_git_sock_path();
     let sock_msys = to_msys_sock_path(&sock_path);
     if sock_path.exists() {
         if let Some(env) = git_agent_env(sock_msys.clone(), None) {
             if list(&env).is_ok() {
-                persist_git_agent_meta(&env);
+                persist_git_agent_meta(&env, None);
                 return Ok(env);
             }
         }
         let _ = std::fs::remove_file(&sock_path);
     }
     let exe_s = exe.display().to_string();
-    let (out, err, code) = sys::run(&exe_s, &["-a", &sock_msys, "-s"])?;
+    let before = list_ssh_agent_winpids();
+    let (out, err, code) = sys::run_timeout(&exe_s, &["-a", &sock_msys, "-s"], Duration::from_secs(8))?;
     let mut env = parse_agent_env(&out);
     if env.auth_sock.is_none() {
         env = parse_agent_env(&err);
     }
     if env.auth_sock.is_none() {
-        // 个别 Git 版本不认 -a 时退回默认启动（套接字可能在 /tmp，终端不易复用）。
-        let (out2, err2, code2) = sys::run(&exe_s, &["-s"])?;
+        recycle_previous_git_agent();
+        let _ = std::fs::remove_file(&sock_path);
+        let (out2, err2, code2) = sys::run_timeout(&exe_s, &["-a", &sock_msys, "-s"], Duration::from_secs(8))?;
         env = parse_agent_env(&out2);
         if env.auth_sock.is_none() {
             env = parse_agent_env(&err2);
@@ -426,7 +658,9 @@ pub fn start_git_agent() -> Result<AgentEnv> {
             "已启动 Git ssh-agent，但配套 ssh-add 仍连不上。请确认已安装 Git for Windows。".into(),
         ));
     }
-    persist_git_agent_meta(&env);
+    let after = list_ssh_agent_winpids();
+    let winpid = after.into_iter().find(|p| !before.contains(p));
+    persist_git_agent_meta(&env, winpid);
     Ok(env)
 }
 
@@ -546,6 +780,105 @@ mod tests {
     fn to_msys_sock_path_converts_windows_drive() {
         let p = std::path::Path::new(r"C:\Users\Jeck\.ssh\agent\s.abc");
         assert_eq!(to_msys_sock_path(p), "/c/Users/Jeck/.ssh/agent/s.abc");
+    }
+
+    #[test]
+    fn from_msys_sock_path_roundtrips_drive() {
+        let msys = "/c/Users/Jeck/.ssh/agent/git-account-manager";
+        let win = from_msys_sock_path(msys);
+        assert_eq!(
+            win,
+            PathBuf::from(format!(
+                "C:{sep}Users{sep}Jeck{sep}.ssh{sep}agent{sep}git-account-manager",
+                sep = std::path::MAIN_SEPARATOR
+            ))
+        );
+        assert_eq!(to_msys_sock_path(&win), msys);
+        assert_eq!(
+            from_msys_sock_path(r"C:\Users\Jeck\.ssh\agent\s.abc"),
+            PathBuf::from(format!(
+                "C:{sep}Users{sep}Jeck{sep}.ssh{sep}agent{sep}s.abc",
+                sep = std::path::MAIN_SEPARATOR
+            ))
+        );
+    }
+
+    #[test]
+    fn managed_sock_only_matches_ssh_agent_dir() {
+        assert!(is_managed_agent_sock("/c/Users/Jeck/.ssh/agent/git-account-manager"));
+        assert!(is_managed_agent_sock(r"C:\Users\Jeck\.ssh\agent\s.abc.agent.xyz"));
+        assert!(!is_managed_agent_sock("/c/Users/Jeck/.ssh/agent-p0a-test/git-account-manager"));
+        assert!(!is_managed_agent_sock("/tmp/ssh-AbC/agent.4242"));
+        assert!(!is_managed_agent_sock(r"\\.\pipe\openssh-ssh-agent"));
+    }
+
+    #[test]
+    fn clear_managed_sock_skips_foreign_and_stable() {
+        let stable = "/c/Users/Jeck/.ssh/agent/git-account-manager";
+        assert!(!should_clear_managed_auth_sock(stable, stable));
+        assert!(!should_clear_managed_auth_sock("/tmp/ssh-AbC/agent.1", stable));
+        assert!(should_clear_managed_auth_sock(
+            "/c/Users/Jeck/.ssh/agent/s.abc.agent.xyz",
+            stable
+        ));
+    }
+
+    #[test]
+    fn select_probe_socks_prefers_stable_and_caps_at_three() {
+        let t1 = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let t2 = SystemTime::UNIX_EPOCH + Duration::from_secs(200);
+        let t3 = SystemTime::UNIX_EPOCH + Duration::from_secs(300);
+        let t4 = SystemTime::UNIX_EPOCH + Duration::from_secs(400);
+        let t5 = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
+        let others = vec![
+            ("/c/Users/x/.ssh/agent/old1".into(), Some(t1)),
+            ("/c/Users/x/.ssh/agent/old2".into(), Some(t2)),
+            ("/c/Users/x/.ssh/agent/mid".into(), Some(t3)),
+            ("/c/Users/x/.ssh/agent/new1".into(), Some(t4)),
+            ("/c/Users/x/.ssh/agent/new2".into(), Some(t5)),
+        ];
+        let got = select_probe_socks(
+            Some("/c/Users/x/.ssh/agent/git-account-manager"),
+            others,
+            MAX_PROBE_CANDIDATES,
+        );
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0], "/c/Users/x/.ssh/agent/git-account-manager");
+        assert_eq!(got[1], "/c/Users/x/.ssh/agent/new2");
+        assert_eq!(got[2], "/c/Users/x/.ssh/agent/new1");
+        assert!(!got.iter().any(|s| s.ends_with("old1") || s.ends_with("old2") || s.ends_with("mid")));
+    }
+
+    #[test]
+    fn select_probe_socks_without_prefer_takes_newest_three() {
+        let t1 = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        let t2 = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+        let t3 = SystemTime::UNIX_EPOCH + Duration::from_secs(3);
+        let t4 = SystemTime::UNIX_EPOCH + Duration::from_secs(4);
+        let others = vec![
+            ("a".into(), Some(t1)),
+            ("b".into(), Some(t2)),
+            ("c".into(), Some(t3)),
+            ("d".into(), Some(t4)),
+            ("e".into(), None),
+        ];
+        let got = select_probe_socks(None, others, MAX_PROBE_CANDIDATES);
+        assert_eq!(got, vec!["d".to_string(), "c".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn parse_pid_file_reads_msys_and_optional_winpid() {
+        assert_eq!(parse_pid_file("4243\n"), (Some("4243".into()), None));
+        assert_eq!(parse_pid_file("4243\n14880\n"), (Some("4243".into()), Some(14880)));
+        assert_eq!(parse_pid_file(""), (None, None));
+        assert_eq!(parse_pid_file("not-a-pid\n12\n"), (None, Some(12)));
+    }
+
+    #[test]
+    fn parse_tasklist_extracts_ssh_agent_pids() {
+        let csv = "\"ssh-agent.exe\",\"7572\",\"Console\",\"1\",\"3,200 K\"\r\n\"ssh-agent.exe\",\"14260\",\"Console\",\"1\",\"2,100 K\"\r\n";
+        assert_eq!(parse_tasklist_ssh_agent_pids(csv), vec![7572, 14260]);
+        assert!(parse_tasklist_ssh_agent_pids("INFO: No tasks are running").is_empty());
     }
 
     #[test]

@@ -94,7 +94,7 @@ export function AccountsPage() {
   }
 
   async function copyUsername(id: string, username: string) {
-    await copyWithClear(username);
+    await copyWithClear(username, undefined, false);
     triggerCopied(`user-${id}`);
   }
 
@@ -213,6 +213,10 @@ export function AccountsPage() {
           e.username.trim().toLowerCase() === username.toLowerCase(),
       );
       if (dup && !window.confirm(`已存在 ${platform} / ${username}，仍要保存吗？`)) {
+        return;
+      }
+      if (editor.id && editor.hasPassword === false && !editor.password?.trim()) {
+        setErr("这条账号的密码已丢失，请重新填入密码。");
         return;
       }
       const args = {
@@ -365,6 +369,7 @@ export function AccountsPage() {
                     const isCopiedUser = copiedKey === `user-${e.id}`;
                     const isCopiedPw = copiedKey === `pw-${e.id}`;
                     const isCopiedTotp = e.totpRef ? copiedKey === `totp-${e.totpRef}` : false;
+                    const pwMissing = e.hasPassword === false;
 
                     return (
                       <div key={e.id} className="account-item">
@@ -433,6 +438,9 @@ export function AccountsPage() {
                             </div>
                           )}
 
+                          {pwMissing && (
+                            <div className="callout danger sm">密码已丢失，请编辑并重新填入。</div>
+                          )}
                           <div className="pwd-box">
                             <span className="mono">{pwShown[e.id] || "••••••••"}</span>
                             {pwShown[e.id] ? (
@@ -456,7 +464,8 @@ export function AccountsPage() {
                                 type="button"
                                 className="btn ghost sm"
                                 style={{ padding: "1px 4px" }}
-                                title="显示明文"
+                                title={pwMissing ? "密码已丢失" : "显示明文"}
+                                disabled={pwMissing}
                                 onClick={() => revealPw(e.id)}
                               >
                                 <Eye size={12} />
@@ -466,7 +475,8 @@ export function AccountsPage() {
                               type="button"
                               className={"btn sm " + (isCopiedPw ? "good" : "primary")}
                               style={{ padding: "2px 8px" }}
-                              title="复制密码"
+                              title={pwMissing ? "密码已丢失" : "复制密码"}
+                              disabled={pwMissing}
                               onClick={() => copyPw(e.id)}
                             >
                               {isCopiedPw ? <Check size={12} /> : <Copy size={12} />}
@@ -721,7 +731,7 @@ function AccountEditor({
 
   return (
     <div className="wizard-overlay">
-      <div className="card" style={{ width: 520, maxWidth: "96vw" }}>
+      <div className="card dialog-card">
         <div className="card-head"><div className="card-title">{value.id ? "编辑账号" : "添加账号"}</div></div>
         <div className="card-body stack">
           <div className="grid-sum">
@@ -758,7 +768,7 @@ function AccountEditor({
 
           <div className="field">
             <FieldLabel
-              name={value.id ? "密码（留空则不改）" : "密码"}
+              name={value.id ? (value.hasPassword === false ? "重新填入密码（必填）" : "密码（留空则不改）") : "密码"}
               tip="改密会自动留下旧密码，可在卡片上的时钟入口查看或回滚。"
             />
             <div className="row">
@@ -766,7 +776,7 @@ function AccountEditor({
                 className="input"
                 type={showPw ? "text" : "password"}
                 autoComplete="new-password"
-                placeholder={value.id ? "不改请留空" : "登录密码"}
+                placeholder={value.id ? (value.hasPassword === false ? "请重新填入密码" : "不改请留空") : "登录密码"}
                 value={value.password || ""}
                 onChange={(e) => onChange({ ...value, password: e.target.value })}
               />
@@ -869,16 +879,16 @@ function AccountEditor({
             </div>
           )}
 
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            {onDelete ? (
-              <button type="button" className="btn danger sm" onClick={onDelete}>删除</button>
-            ) : (
-              <span />
-            )}
-            <div className="row">
-              <button type="button" className="btn ghost sm" onClick={onClose}>取消</button>
-              <button type="button" className="btn primary sm" disabled={busy} onClick={onSave}>保存</button>
-            </div>
+        </div>
+        <div className="card-foot">
+          {onDelete ? (
+            <button type="button" className="btn danger sm" onClick={onDelete}>删除</button>
+          ) : (
+            <span />
+          )}
+          <div className="row">
+            <button type="button" className="btn ghost sm" onClick={onClose}>取消</button>
+            <button type="button" className="btn primary sm" disabled={busy} onClick={onSave}>保存</button>
           </div>
         </div>
       </div>

@@ -569,7 +569,8 @@ export const api = {
     invoke<void>("account_rollback_history", { id, index }),
   accountClearHistory: (id: string) => invoke<void>("account_clear_history", { id }),
 
-  clipboardWrite: (text: string) => invoke<void>("clipboard_write", { text }),
+  clipboardWrite: (text: string, secret = false) =>
+    invoke<ClipboardWriteResult>("clipboard_write", { text, secret }),
   clipboardClear: () => invoke<void>("clipboard_clear"),
   getRevealSettings: () => invoke<RevealSettings>("get_reveal_settings"),
   setRevealGraceMinutes: (minutes: number) => invoke<number>("set_reveal_grace_minutes", { minutes }),
@@ -579,6 +580,8 @@ export const api = {
   iconListBuiltin: () => invoke<BuiltinIconInfo[]>("icon_list_builtin"),
   iconUploadCustom: (filePath: string) => invoke<CustomIconInfo>("icon_upload_custom", { filePath }),
   iconGetCustom: (iconRef: string) => invoke<string>("icon_get_custom", { iconRef }),
+
+  securityChecklist: () => invoke<SecurityChecklist>("security_checklist"),
 };
 
 export function errMessage(e: unknown): string {
@@ -611,6 +614,7 @@ export interface TotpEntry {
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
+  hasSeed?: boolean;
 }
 
 export interface AccountEntry {
@@ -629,6 +633,7 @@ export interface AccountEntry {
   lastUsedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  hasPassword?: boolean;
 }
 
 export interface TotpCode {
@@ -640,6 +645,7 @@ export interface TotpCode {
 export interface TotpSecretReveal {
   secretBase32: string;
   otpauthUri: string;
+  qrPngBase64: string;
 }
 
 export interface ParsedTotpPreview {
@@ -680,6 +686,33 @@ export interface RevealSettings {
   revealGraceMinutes: number;
   clipboardClearSeconds: number;
   accountHistoryLimit: number;
+}
+
+export type SecuritySeverity = "ok" | "info" | "warn";
+export type SecurityLevel = "safe" | "caution" | "risk";
+export type SecurityCategory = "storage" | "app";
+
+export interface SecurityFinding {
+  id: string;
+  category: SecurityCategory;
+  severity: SecuritySeverity;
+  title: string;
+  detail: string;
+  advice: string;
+  settingsAnchor?: string | null;
+  limitation?: string | null;
+}
+
+export interface SecurityChecklist {
+  checkedAt: string;
+  level: SecurityLevel;
+  items: SecurityFinding[];
+}
+
+export interface ClipboardWriteResult {
+  excluded: boolean;
+  fallback: boolean;
+  notice?: string | null;
 }
 
 export interface TotpUpsertArgs {

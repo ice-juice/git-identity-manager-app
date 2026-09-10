@@ -48,6 +48,7 @@ pub struct TotpCode {
 pub struct TotpSecretReveal {
     pub secret_base32: String,
     pub otpauth_uri: String,
+    pub qr_png_base64: String,
 }
 
 #[derive(Serialize)]
@@ -75,10 +76,23 @@ pub fn totp_list(state: State<AppState>) -> Result<TotpList> {
         return Err(AppError::Locked);
     }
     let data = store::load_totp(v)?;
+    let secrets = store::load_secrets(v)?;
+    let entries = data
+        .entries
+        .into_iter()
+        .map(|mut e| {
+            e.has_seed = secrets.totp_seeds.contains_key(&e.id);
+            e
+        })
+        .collect();
     Ok(TotpList {
-        entries: data.entries,
+        entries,
         groups: data.groups,
     })
+}
+
+fn missing_seed() -> AppError {
+    AppError::Other("这条 TOTP 的种子已丢失，请重新导入密钥或 otpauth 链接。".into())
 }
 
 fn publish(app: AppHandle) {
@@ -118,14 +132,15 @@ pub fn totp_add(app: AppHandle, state: State<AppState>, args: TotpUpsertArgs) ->
         sort_order: args.sort_order.unwrap_or(0),
         created_at: now.clone(),
         updated_at: now,
+        has_seed: true,
     };
     if entry.issuer.is_empty() || entry.account.is_empty() {
         return Err(AppError::Invalid("平台名与账号不能为空".into()));
     }
     secrets.totp_seeds.insert(entry.id.clone(), secret);
     data.entries.push(entry.clone());
-    store::save_totp(v, &data)?;
     store::save_secrets(v, &secrets)?;
+    store::save_totp(v, &data)?;
     util::audit(v.root(), &format!("新增 TOTP id={}", entry.id));
     drop(vault);
     publish(app);
@@ -171,10 +186,13 @@ pub fn totp_update(app: AppHandle, state: State<AppState>, args: TotpUpsertArgs)
     entry.updated_at = now();
     if let Some(secret) = args.secret.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         secrets.totp_seeds.insert(id.clone(), totp::normalize_secret(secret)?);
+    } else if !secrets.totp_seeds.contains_key(&id) {
+        return Err(AppError::Invalid("这条记录没有种子，请重新填入 TOTP 密钥".into()));
     }
-    let out = entry.clone();
-    store::save_totp(v, &data)?;
+    let mut out = entry.clone();
+    out.has_seed = secrets.totp_seeds.contains_key(&id);
     store::save_secrets(v, &secrets)?;
+    store::save_totp(v, &data)?;
     util::audit(v.root(), &format!("更新 TOTP id={id}"));
     drop(vault);
     publish(app);
@@ -198,8 +216,8 @@ pub fn totp_delete(app: AppHandle, state: State<AppState>, id: String) -> Result
     }
     data.deleted_entries.insert(id.clone(), now());
     secrets.totp_seeds.remove(&id);
-    store::save_totp(v, &data)?;
     store::save_secrets(v, &secrets)?;
+    store::save_totp(v, &data)?;
     util::audit(v.root(), &format!("删除 TOTP id={id}"));
     drop(vault);
     publish(app);
@@ -237,10 +255,7 @@ pub fn totp_generate_code(state: State<AppState>, id: String, password: Option<S
         .find(|e| e.id == id)
         .ok_or_else(|| AppError::Invalid("TOTP 条目不存在".into()))?;
     let secrets = store::load_secrets(v)?;
-    let secret = secrets
-        .totp_seeds
-        .get(&id)
-        .ok_or_else(|| AppError::Invalid("缺少 TOTP 种子".into()))?;
+    let secret = secrets.totp_seeds.get(&id).ok_or_else(missing_seed)?;
     let unix = totp::now_unix();
     let code = totp::generate_code(secret, &entry.algorithm, entry.digits, entry.period, unix)?;
     util::audit(v.root(), &format!("查看 TOTP 验证码 id={id}"));
@@ -288,19 +303,20 @@ pub fn totp_reveal_secret(state: State<AppState>, id: String, password: String) 
         .totp_seeds
         .get(&id)
         .cloned()
-        .ok_or_else(|| AppError::Invalid("缺少 TOTP 种子".into()))?;
+        .ok_or_else(missing_seed)?;
     let otpauth_uri = totp::build_otpauth(entry, &secret);
+    let qr_png_base64 = qrscan::render_otpauth_png_b64(&otpauth_uri)?;
     util::audit(v.root(), &format!("取回 TOTP 原始密钥 id={id}"));
     Ok(TotpSecretReveal {
         secret_base32: secret,
         otpauth_uri,
+        qr_png_base64,
     })
 }
 
 #[tauri::command]
 pub fn totp_export_qr(state: State<AppState>, id: String, password: String) -> Result<String> {
-    let revealed = totp_reveal_secret(state, id, password)?;
-    qrscan::render_otpauth_png_b64(&revealed.otpauth_uri)
+    Ok(totp_reveal_secret(state, id, password)?.qr_png_base64)
 }
 
 fn preview_from_parsed(p: &totp::ParsedOtpauth) -> ParsedTotpPreview {

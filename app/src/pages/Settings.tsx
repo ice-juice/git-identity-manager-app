@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -14,7 +14,17 @@ import {
   FileCog,
   Play,
 } from "lucide-react";
-import { api, errMessage, type NetworkProxy, type ProxyTestResult, type UpdateCheckResult, type UpdateSource } from "../lib/ipc";
+import {
+  api,
+  errMessage,
+  type NetworkProxy,
+  type ProxyTestResult,
+  type SecurityChecklist,
+  type SecurityFinding,
+  type SecurityLevel,
+  type UpdateCheckResult,
+  type UpdateSource,
+} from "../lib/ipc";
 import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 import { THEME_OPTIONS } from "../lib/theme";
@@ -829,6 +839,164 @@ function formatExpiry(iso: string | null): string {
 
 type SettingsTab = "general" | "security" | "workspace" | "about" | "danger";
 
+const SETTING_ANCHOR_TAB: Record<string, SettingsTab> = {
+  "workspace-path": "workspace",
+  "auto-lock": "workspace",
+  "lock-on-sleep": "workspace",
+  "reveal-grace": "security",
+  "clipboard-clear": "security",
+};
+
+function scrollToSettingAnchor(anchor: string) {
+  const el = document.getElementById(`setting-${anchor}`);
+  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function levelBadge(level: SecurityLevel): { kind: string; label: string } {
+  if (level === "risk") return { kind: "danger", label: "有风险" };
+  if (level === "caution") return { kind: "warn", label: "需留意" };
+  return { kind: "good", label: "安全" };
+}
+
+function findingCallout(severity: SecurityFinding["severity"]): string {
+  if (severity === "warn") return "warn";
+  if (severity === "info") return "info";
+  return "good";
+}
+
+function SecurityChecklistCard({
+  refreshNonce,
+  onJump,
+}: {
+  refreshNonce: number;
+  onJump: (anchor: string) => void;
+}) {
+  const [list, setList] = useState<SecurityChecklist | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showOk, setShowOk] = useState(false);
+
+  async function load() {
+    setErr("");
+    setBusy(true);
+    try {
+      setList(await api.securityChecklist());
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    load().catch((e) => setErr(errMessage(e)));
+  }, [refreshNonce]);
+
+  const todos = list?.items.filter((i) => i.severity !== "ok") ?? [];
+  const oks = list?.items.filter((i) => i.severity === "ok") ?? [];
+  const badge = list ? levelBadge(list.level) : null;
+
+  return (
+    <Card
+      title="安全自查"
+      actions={
+        <button type="button" className="btn ghost sm" disabled={busy} onClick={load}>
+          <RefreshCw size={13} className={busy ? "animate-spin" : ""} style={{ marginRight: 3 }} />
+          {busy ? "正在检查…" : "刷新"}
+        </button>
+      }
+    >
+      <div className="stack">
+        {err && <div className="err-text">{err}</div>}
+        {badge && (
+          <div className="kv">
+            <span className="muted">当前状态</span>
+            <span>
+              <Badge kind={badge.kind}>{badge.label}</Badge>
+              {list?.checkedAt && (
+                <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                  {formatWhen(list.checkedAt)}
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+
+        <div className="callout info" style={{ fontSize: 12 }}>
+          <div>这份清单只读本机配置与工作空间路径，全程在本机计算，不上报、零遥测。</div>
+          <div style={{ marginTop: 6 }}>
+            系统不会告诉本应用谁在监听剪贴板、谁在截屏或录屏，因此无法指认监听者或截屏调用方。
+          </div>
+          <div style={{ marginTop: 6 }}>
+            剪贴板排除是给系统历史、云剪贴板和守规矩的管理器看的协作式约定，恶意程序可以无视。它不能防木马，也不会让截图变黑。
+          </div>
+        </div>
+
+        {todos.length === 0 && list && (
+          <div className="muted" style={{ fontSize: 12 }}>
+            当前没有待处理项。下面折叠的是已通过的检查。
+          </div>
+        )}
+
+        {todos.map((item) => (
+          <div key={item.id} className={"callout " + findingCallout(item.severity)}>
+            <div className="between" style={{ alignItems: "flex-start", gap: 8 }}>
+              <strong>{item.title}</strong>
+              <Badge kind={item.severity === "warn" ? "danger" : "warn"}>
+                {item.severity === "warn" ? "建议处理" : "留意"}
+              </Badge>
+            </div>
+            <div style={{ marginTop: 6 }}>{item.detail}</div>
+            <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+              {item.advice}
+            </div>
+            {item.limitation && (
+              <div className="hint" style={{ marginTop: 6 }}>
+                {item.limitation}
+              </div>
+            )}
+            {item.settingsAnchor && (
+              <div style={{ marginTop: 8 }}>
+                <button type="button" className="btn sm" onClick={() => onJump(item.settingsAnchor!)}>
+                  前往对应设置
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {oks.length > 0 && (
+          <div>
+            <button type="button" className="btn ghost sm" onClick={() => setShowOk((v) => !v)}>
+              {showOk ? "收起已通过的检查" : `已通过的检查（${oks.length}）`}
+            </button>
+            {showOk && (
+              <div className="stack" style={{ marginTop: 8 }}>
+                {oks.map((item) => (
+                  <div key={item.id} className="callout good">
+                    <div className="between">
+                      <strong>{item.title}</strong>
+                      <Badge kind="good">通过</Badge>
+                    </div>
+                    <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                      {item.detail}
+                    </div>
+                    {item.limitation && (
+                      <div className="hint" style={{ marginTop: 6 }}>
+                        {item.limitation}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export function Settings() {
   const navigate = useNavigate();
   const {
@@ -843,6 +1011,8 @@ export function Settings() {
     startUnlockAnim,
   } = useApp();
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const [checklistNonce, setChecklistNonce] = useState(0);
+  const pendingAnchor = useRef<string | null>(null);
 
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -867,6 +1037,25 @@ export function Settings() {
       setHistLimit(String(s.accountHistoryLimit));
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const anchor = pendingAnchor.current;
+    if (!anchor) return;
+    pendingAnchor.current = null;
+    const id = window.setTimeout(() => scrollToSettingAnchor(anchor), 0);
+    return () => window.clearTimeout(id);
+  }, [activeTab]);
+
+  function jumpToSetting(anchor: string) {
+    const tab = SETTING_ANCHOR_TAB[anchor] ?? "security";
+    pendingAnchor.current = anchor;
+    if (tab !== activeTab) {
+      setActiveTab(tab);
+    } else {
+      scrollToSettingAnchor(anchor);
+      pendingAnchor.current = null;
+    }
+  }
 
   async function changePassword() {
     setErr("");
@@ -1174,6 +1363,8 @@ export function Settings() {
           {/* TAB 2: 安全与凭据 */}
           {activeTab === "security" && (
             <>
+              <SecurityChecklistCard refreshNonce={checklistNonce} onJump={jumpToSetting} />
+
               <Card title="开机免验证 (Windows DPAPI)">
                 <div className="stack">
                   <div className="field">
@@ -1215,7 +1406,7 @@ export function Settings() {
               <Card title="查看 OTP / 密码的免密时效">
                 <div className="stack">
                   <div className="muted">独立于开机免验证。锁定或退出后立即失效。取回 TOTP 原始密钥仍每次都要密码。</div>
-                  <div className="field">
+                  <div className="field" id="setting-reveal-grace">
                     <FieldLabel name="免密查看时效" tip="首次验证后，在该时间内再看验证码或账号密码不用重复输入。0 表示每次都验。" />
                     <div className="row" style={{ marginTop: 4 }}>
                       <select className="input" style={{ width: 160 }} value={revealGrace} onChange={(e) => setRevealGrace(e.target.value)}>
@@ -1234,6 +1425,7 @@ export function Settings() {
                           try {
                             await api.setRevealGraceMinutes(Number(revealGrace));
                             setMsg("已保存免密查看时效");
+                            setChecklistNonce((n) => n + 1);
                           } catch (e) {
                             setErr(errMessage(e));
                           } finally {
@@ -1245,7 +1437,7 @@ export function Settings() {
                       </button>
                     </div>
                   </div>
-                  <div className="field">
+                  <div className="field" id="setting-clipboard-clear">
                     <label className="field-label">复制后清空剪贴板</label>
                     <div className="row">
                       <select className="input" style={{ width: 140 }} value={clipSec} onChange={(e) => setClipSec(e.target.value)}>
@@ -1261,6 +1453,7 @@ export function Settings() {
                         onClick={async () => {
                           await api.setClipboardClearSeconds(Number(clipSec));
                           setMsg("已保存剪贴板清空时间");
+                          setChecklistNonce((n) => n + 1);
                         }}
                       >
                         保存
@@ -1321,7 +1514,7 @@ export function Settings() {
                       <div className="callout danger">⚠️ 仅显示一次，请立即保存：</div>
                       <div className="reckey">{newRecovery}</div>
                       <div className="row">
-                        <button className="btn sm" onClick={() => writeClipboard(newRecovery)}>
+                        <button className="btn sm" onClick={() => writeClipboard(newRecovery, true)}>
                           复制
                         </button>
                         <button className="btn ghost sm" onClick={() => setNewRecovery("")}>
@@ -1346,7 +1539,7 @@ export function Settings() {
             <>
               <Card title="工作空间信息">
                 <div className="stack">
-                  <div className="kv">
+                  <div className="kv" id="setting-workspace-path">
                     <span className="muted">存储路径</span>
                     <span className="mono">{status?.workspacePath ?? "—"}</span>
                   </div>
@@ -1363,9 +1556,15 @@ export function Settings() {
                     <span className="muted">空间 ID</span>
                     <span className="mono">{status?.workspaceId ?? "—"}</span>
                   </div>
-                  <div className="kv">
+                  <div className="kv" id="setting-auto-lock">
                     <span className="muted">自动锁定</span>
                     <span>{status?.autoLockMinutes ?? 0} 分钟</span>
+                  </div>
+                  <div className="kv" id="setting-lock-on-sleep">
+                    <span className="muted">休眠/锁屏锁定</span>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      由本机配置 lockOnSleep 控制，见上方安全自查建议
+                    </span>
                   </div>
                 </div>
               </Card>

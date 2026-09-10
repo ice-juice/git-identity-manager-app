@@ -58,10 +58,27 @@ pub fn account_list(state: State<AppState>) -> Result<AccountList> {
         return Err(AppError::Locked);
     }
     let data = store::load_accounts(v)?;
+    let secrets = store::load_secrets(v)?;
+    let entries = data
+        .entries
+        .into_iter()
+        .map(|mut e| {
+            e.has_password = secrets
+                .account_secrets
+                .get(&e.id)
+                .map(|s| !s.password.is_empty())
+                .unwrap_or(false);
+            e
+        })
+        .collect();
     Ok(AccountList {
-        entries: data.entries,
+        entries,
         groups: data.groups,
     })
+}
+
+fn missing_password() -> AppError {
+    AppError::Other("这条账号的密码已丢失，请编辑并重新填入密码。".into())
 }
 
 #[tauri::command]
@@ -104,6 +121,7 @@ pub fn account_add(app: AppHandle, state: State<AppState>, args: AccountUpsertAr
         last_used_at: None,
         created_at: now.clone(),
         updated_at: now,
+        has_password: true,
     };
     secrets.account_secrets.insert(
         entry.id.clone(),
@@ -114,8 +132,8 @@ pub fn account_add(app: AppHandle, state: State<AppState>, args: AccountUpsertAr
         },
     );
     data.entries.push(entry.clone());
-    store::save_accounts(v, &data)?;
     store::save_secrets(v, &secrets)?;
+    store::save_accounts(v, &data)?;
     util::audit(v.root(), &format!("新增隐私账号 id={}", entry.id));
     drop(vault);
     publish(app);
@@ -180,10 +198,22 @@ pub fn account_update(app: AppHandle, state: State<AppState>, args: AccountUpser
             }
             secret.password = new_pw.to_string();
         }
+    } else if secrets
+        .account_secrets
+        .get(&id)
+        .map(|s| s.password.is_empty())
+        .unwrap_or(true)
+    {
+        return Err(AppError::Invalid("这条记录没有密码，请重新填入".into()));
     }
-    let out = entry.clone();
-    store::save_accounts(v, &data)?;
+    let mut out = entry.clone();
+    out.has_password = secrets
+        .account_secrets
+        .get(&id)
+        .map(|s| !s.password.is_empty())
+        .unwrap_or(false);
     store::save_secrets(v, &secrets)?;
+    store::save_accounts(v, &data)?;
     util::audit(v.root(), &format!("更新隐私账号 id={id}"));
     drop(vault);
     publish(app);
@@ -207,8 +237,8 @@ pub fn account_delete(app: AppHandle, state: State<AppState>, id: String) -> Res
     }
     data.deleted_entries.insert(id.clone(), now());
     secrets.account_secrets.remove(&id);
-    store::save_accounts(v, &data)?;
     store::save_secrets(v, &secrets)?;
+    store::save_accounts(v, &data)?;
     util::audit(v.root(), &format!("删除隐私账号 id={id}"));
     drop(vault);
     publish(app);
@@ -245,7 +275,7 @@ pub fn account_reveal_password(state: State<AppState>, id: String, password: Opt
         .get(&id)
         .map(|s| s.password.clone())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::Invalid("该账号没有保存密码".into()))?;
+        .ok_or_else(missing_password)?;
     util::audit(v.root(), &format!("查看账号密码 id={id}"));
     Ok(pw)
 }

@@ -440,7 +440,7 @@ export function InitWizard() {
                   </div>
                   <div className="reckey">{recovery}</div>
                   <div className="row">
-                    <button type="button" className="btn primary sm" onClick={() => writeClipboard(recovery)}>
+                    <button type="button" className="btn primary sm" onClick={() => writeClipboard(recovery, true)}>
                       复制恢复密钥
                     </button>
                   </div>
