@@ -567,7 +567,7 @@ function AboutUpdateCard() {
   useEffect(() => {
     getVersion()
       .then(setVersion)
-      .catch(() => setVersion("1.1.1"));
+      .catch(() => setVersion("1.2.0"));
     loadPrefs().catch((e) => setErr(errMessage(e)));
   }, []);
 
