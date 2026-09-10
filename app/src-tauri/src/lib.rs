@@ -9,6 +9,7 @@ pub mod error;
 pub mod git;
 pub mod importer;
 pub mod model;
+pub mod net;
 pub mod platform;
 pub mod single_instance;
 pub mod ssh;
@@ -126,6 +127,9 @@ pub fn run() {
             commands::update::download_and_install_update,
             commands::update::skip_update_version,
             commands::update::get_last_update_check,
+            commands::proxy::get_network_proxy,
+            commands::proxy::save_network_proxy,
+            commands::proxy::test_network_proxy,
         ])
         .setup(|app| {
             tray::install(app.handle())?;

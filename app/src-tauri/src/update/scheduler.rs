@@ -30,7 +30,7 @@ fn silent_check(app: &AppHandle) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    let (enabled, skipped, src) = match state.config.lock() {
+    let (enabled, skipped, src, proxy) = match state.config.lock() {
         Ok(cfg) => {
             if !cfg.auto_check_update {
                 return;
@@ -39,6 +39,7 @@ fn silent_check(app: &AppHandle) {
                 true,
                 cfg.skipped_update_version.clone(),
                 update::source::effective_source(&cfg),
+                crate::net::effective(&cfg),
             )
         }
         Err(_) => return,
@@ -52,7 +53,7 @@ fn silent_check(app: &AppHandle) {
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        match update::checker::check(&app, &src).await {
+        match update::checker::check(&app, &src, proxy.as_ref()).await {
             Ok(result) => {
                 persist_last_check(&app);
                 if should_notify(

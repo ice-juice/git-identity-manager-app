@@ -495,7 +495,11 @@ pub struct CloneOrInitArgs {
     pub mode: String,
 }
 
-fn run_git(env: &AgentEnv, args: &[&str]) -> Result<(String, String, i32)> {
+fn run_git(
+    env: &AgentEnv,
+    args: &[&str],
+    proxy: Option<&crate::app_config::NetworkProxy>,
+) -> Result<(String, String, i32)> {
     let mut cmd = Command::new("git");
     cmd.args(args);
     crate::agent::apply_to_command(&mut cmd, env);
@@ -509,6 +513,9 @@ fn run_git(env: &AgentEnv, args: &[&str]) -> Result<(String, String, i32)> {
             format!("\"{ssh}\" -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
         };
         cmd.env("GIT_SSH_COMMAND", ssh_cmd);
+    }
+    if let Some(p) = proxy {
+        crate::net::apply_git_command(&mut cmd, p)?;
     }
     let output = cmd
         .output()
@@ -563,6 +570,11 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
         }
     };
 
+    let proxy = {
+        let cfg = state.config.lock().unwrap();
+        crate::net::effective(&cfg)
+    };
+
     let r = with_vault(&state, |v| {
         let mut data = store::load_data(v)?;
         let identity = data
@@ -583,7 +595,7 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
                 if let Some(parent) = PathBuf::from(&target_str).parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                let (_o, e, code) = run_git(&env, &["clone", &used_url, &target_str])?;
+                let (_o, e, code) = run_git(&env, &["clone", &used_url, &target_str], proxy.as_ref())?;
                 if code != 0 {
                     return Err(AppError::Other(format!("git clone 失败：{}", e.trim())));
                 }
@@ -713,24 +725,26 @@ pub fn clear_github_pat(app: AppHandle, state: State<AppState>) -> Result<()> {
 /// 校验 PAT 并返回账号名。
 #[tauri::command]
 pub fn test_github_pat(state: State<AppState>) -> Result<String> {
+    let proxy = crate::net::effective(&state.config.lock().unwrap());
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
             .github_pat
             .ok_or_else(|| AppError::Invalid("尚未配置 PAT".into()))?;
-        github::whoami(&token)
+        github::whoami(&token, proxy.as_ref())
     })
 }
 
 /// 拉取 PAT 账号所属组织（供批量导入归属标识）。
 #[tauri::command]
 pub fn list_github_orgs(state: State<AppState>) -> Result<Vec<String>> {
+    let proxy = crate::net::effective(&state.config.lock().unwrap());
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
             .github_pat
             .ok_or_else(|| AppError::Invalid("尚未配置 PAT".into()))?;
-        github::list_orgs(&token)
+        github::list_orgs(&token, proxy.as_ref())
     })
 }
 
@@ -738,6 +752,7 @@ pub fn list_github_orgs(state: State<AppState>) -> Result<Vec<String>> {
 #[tauri::command]
 pub fn upload_public_key(state: State<AppState>, key_id: String, title: String) -> Result<()> {
     crate::commands::ensure_writes_allowed(&state)?;
+    let proxy = crate::net::effective(&state.config.lock().unwrap());
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
@@ -749,7 +764,7 @@ pub fn upload_public_key(state: State<AppState>, key_id: String, title: String) 
             .iter()
             .find(|k| k.id == key_id)
             .ok_or_else(|| AppError::Invalid("密钥不存在".into()))?;
-        github::upload_public_key(&token, &title, &record.public_openssh)?;
+        github::upload_public_key(&token, &title, &record.public_openssh, proxy.as_ref())?;
         crate::util::audit(v.root(), &format!("PAT 上传公钥 {}", record.name));
         Ok(())
     })

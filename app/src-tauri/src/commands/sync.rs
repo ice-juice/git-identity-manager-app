@@ -87,8 +87,12 @@ pub fn import_s3_config(src_path: String) -> Result<S3Config> {
 }
 
 #[tauri::command]
-pub fn test_cloud_sync_config(sync_config: S3Config) -> Result<u128> {
-    let client = S3Client::new(sync_config)?;
+pub fn test_cloud_sync_config(state: State<AppState>, sync_config: S3Config) -> Result<u128> {
+    let proxy = {
+        let cfg = state.config.lock().unwrap();
+        crate::net::for_cloud_sync(&cfg)
+    };
+    let client = S3Client::new_with_proxy(sync_config, proxy.as_ref())?;
     client.test_connection()
 }
 
@@ -119,7 +123,7 @@ pub fn get_cloud_sync_status(state: State<AppState>) -> Result<CloudSyncStatus> 
         }
     };
 
-    let client = S3Client::new(sync_config)?;
+    let client = s3_from_state(&state, sync_config)?;
     engine::get_sync_status(vault, &client)
 }
 
@@ -137,7 +141,7 @@ pub fn cloud_sync_push(state: State<AppState>) -> Result<SyncResult> {
             .ok_or_else(|| AppError::Invalid("尚未配置云存储连接参数".into()))?
     };
 
-    let client = S3Client::new(sync_config)?;
+    let client = s3_from_state(&state, sync_config)?;
     engine::push_to_cloud(vault, &client)
 }
 
@@ -154,7 +158,7 @@ pub fn cloud_sync_pull(state: State<AppState>) -> Result<SyncResult> {
             .ok_or_else(|| AppError::Invalid("尚未配置云存储连接参数".into()))?
     };
 
-    let client = S3Client::new(sync_config)?;
+    let client = s3_from_state(&state, sync_config)?;
     engine::pull_from_cloud(vault, &client)
 }
 
@@ -195,7 +199,11 @@ fn require_client(state: &AppState) -> Result<S3Client> {
         .cloud_sync
         .clone()
         .ok_or_else(|| AppError::Invalid("尚未配置云存储连接参数".into()))?;
-    S3Client::new(sync_config)
+    S3Client::from_app(sync_config, &state.config.lock().unwrap())
+}
+
+fn s3_from_state(state: &AppState, sync_config: S3Config) -> Result<S3Client> {
+    S3Client::from_app(sync_config, &state.config.lock().unwrap())
 }
 
 #[tauri::command]
@@ -251,7 +259,7 @@ pub fn preview_cloud_restore(
     if recovery_key.trim().is_empty() {
         return Err(AppError::Invalid("请输入恢复密钥".into()));
     }
-    let client = S3Client::new(sync_config)?;
+    let client = S3Client::from_app(sync_config, &crate::app_config::AppConfig::load())?;
     engine::preview_cloud_restore(&client, &recovery_key)
 }
 
@@ -281,7 +289,7 @@ pub fn restore_from_cloud(
         return Err(AppError::AlreadyInitialized(path));
     }
 
-    let client = S3Client::new(sync_config.clone())?;
+    let client = S3Client::from_app(sync_config.clone(), &state.config.lock().unwrap())?;
     let (vault, result) = engine::restore_from_cloud(
         &root,
         &password,

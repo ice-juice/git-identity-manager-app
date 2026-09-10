@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod assets;
+pub mod proxy;
 pub mod repo;
 pub mod sync;
 pub mod update;

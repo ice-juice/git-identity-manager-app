@@ -6,7 +6,9 @@
 //! - MinIO / 自建 S3 服务
 //! - 阿里云 OSS / 腾讯云 COS（S3 兼容模式）
 
+use crate::app_config::{AppConfig, NetworkProxy};
 use crate::error::{AppError, Result};
+use crate::net;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
@@ -47,11 +49,24 @@ pub struct S3Client {
 
 impl S3Client {
     pub fn new(config: S3Config) -> Result<Self> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
+        Self::new_with_proxy(config, None)
+    }
+
+    pub fn new_with_proxy(config: S3Config, proxy: Option<&NetworkProxy>) -> Result<Self> {
+        let mut builder = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(20));
+        if let Some(p) = proxy {
+            builder = net::apply_reqwest_blocking(builder, p)?;
+        }
+        let client = builder
             .build()
             .map_err(|e| AppError::Invalid(format!("创建 HTTP 客户端失败: {e}")))?;
         Ok(Self { config, client })
+    }
+
+    pub fn from_app(config: S3Config, app: &AppConfig) -> Result<Self> {
+        let proxy = net::for_cloud_sync(app);
+        Self::new_with_proxy(config, proxy.as_ref())
     }
 
     pub fn full_key(&self, subpath: &str) -> String {

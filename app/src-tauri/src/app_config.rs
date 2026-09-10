@@ -74,6 +74,50 @@ pub struct AppConfig {
     /// 最近一次检查时间（ISO）。
     #[serde(default)]
     pub last_update_check_at: Option<String>,
+    /// 本机网络代理（访问 GitHub / GitLab / 更新源等）。None 表示未配置。
+    #[serde(default)]
+    pub network_proxy: Option<NetworkProxy>,
+}
+
+/// 本机 HTTP/HTTPS/SOCKS5 代理。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkProxy {
+    /// 总开关。false 时其余字段保留但不生效。
+    pub enabled: bool,
+    /// "http" | "https" | "socks5"
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    /// 本应用拉起的 git HTTPS 是否带上代理环境变量。
+    #[serde(default = "default_true")]
+    pub apply_to_git_https: bool,
+    /// 本应用拉起的 ssh / GIT_SSH_COMMAND 是否注入 ProxyCommand。
+    #[serde(default = "default_true")]
+    pub apply_to_ssh: bool,
+    /// 云同步 reqwest 是否走代理。
+    #[serde(default = "default_true")]
+    pub apply_to_cloud_sync: bool,
+}
+
+impl Default for NetworkProxy {
+    fn default() -> Self {
+        NetworkProxy {
+            enabled: false,
+            scheme: "http".into(),
+            host: "127.0.0.1".into(),
+            port: 7890,
+            username: None,
+            password: None,
+            apply_to_git_https: true,
+            apply_to_ssh: true,
+            apply_to_cloud_sync: true,
+        }
+    }
 }
 
 /// 本机更新源偏好。
@@ -146,6 +190,7 @@ impl Default for AppConfig {
             auto_check_update: true,
             skipped_update_version: None,
             last_update_check_at: None,
+            network_proxy: None,
         }
     }
 }
@@ -206,6 +251,7 @@ mod tests {
         assert!(cfg.auto_check_update, "旧配置缺少字段时应默认开启自动检查");
         assert_eq!(cfg.skipped_update_version, None);
         assert_eq!(cfg.last_update_check_at, None);
+        assert_eq!(cfg.network_proxy, None);
         let filled = UpdateSource::effective(cfg.update_source.as_ref());
         assert_eq!(filled.kind, "github");
         assert_eq!(filled.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));

@@ -352,6 +352,9 @@ pub fn test_connection(state: State<AppState>, host_alias: String) -> Result<Aut
         &target,
     ]);
     crate::agent::apply_to_command(&mut cmd, &env);
+    if let Some(p) = crate::net::effective(&state.config.lock().unwrap()) {
+        crate::net::apply_ssh_command(&mut cmd, &p)?;
+    }
     let output = cmd
         .output()
         .map_err(|e| AppError::Io(format!("执行 ssh 失败：{e}")))?;

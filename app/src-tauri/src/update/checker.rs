@@ -1,13 +1,14 @@
 //! 调用插件 check、语义化版本比较、结果映射。
 
-use crate::app_config::{UpdateSource, DEFAULT_UPDATE_REPO};
+use crate::app_config::{NetworkProxy, UpdateSource, DEFAULT_UPDATE_REPO};
 use crate::error::{AppError, Result};
+use crate::net;
 use crate::platform;
 use crate::update::source::{self, github_tag_json_url};
 use semver::Version;
 use serde::Serialize;
 use tauri::AppHandle;
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Updater, UpdaterExt};
 use url::Url;
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,20 +25,18 @@ pub struct UpdateCheckResult {
     pub self_update_supported: bool,
 }
 
-pub async fn check(app: &AppHandle, src: &UpdateSource) -> Result<UpdateCheckResult> {
+pub async fn check(
+    app: &AppHandle,
+    src: &UpdateSource,
+    proxy: Option<&NetworkProxy>,
+) -> Result<UpdateCheckResult> {
     let current_version = app.package_info().version.to_string();
     let platform = platform::updater_platform_key();
     let self_update_supported = platform::self_update_supported();
     let fallback = manual_download_url(src);
 
-    let endpoints = resolve_check_endpoints(src).await?;
-    let updater = app
-        .updater_builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .endpoints(endpoints)
-        .map_err(map_updater_err)?
-        .build()
-        .map_err(map_updater_err)?;
+    let endpoints = resolve_check_endpoints(src, proxy).await?;
+    let updater = build_updater(app, endpoints, proxy)?;
 
     match updater.check().await {
         Ok(Some(update)) => {
@@ -81,7 +80,26 @@ pub async fn check(app: &AppHandle, src: &UpdateSource) -> Result<UpdateCheckRes
     }
 }
 
-pub async fn resolve_check_endpoints(src: &UpdateSource) -> Result<Vec<Url>> {
+pub fn build_updater(
+    app: &AppHandle,
+    endpoints: Vec<Url>,
+    proxy: Option<&NetworkProxy>,
+) -> Result<Updater> {
+    let mut builder = app
+        .updater_builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .endpoints(endpoints)
+        .map_err(map_updater_err)?;
+    if let Some(p) = proxy {
+        builder = net::apply_updater(builder, p).map_err(map_proxy_err)?;
+    }
+    builder.build().map_err(map_updater_err)
+}
+
+pub async fn resolve_check_endpoints(
+    src: &UpdateSource,
+    proxy: Option<&NetworkProxy>,
+) -> Result<Vec<Url>> {
     if src.kind == "github" && src.include_prerelease {
         let repo = src
             .repo
@@ -90,7 +108,7 @@ pub async fn resolve_check_endpoints(src: &UpdateSource) -> Result<Vec<Url>> {
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_UPDATE_REPO);
         source::validate_github_repo(repo)?;
-        if let Some(tag) = fetch_latest_github_tag(repo, true).await? {
+        if let Some(tag) = fetch_latest_github_tag(repo, true, proxy).await? {
             return Ok(vec![github_tag_json_url(repo, &tag)?]);
         }
     }
@@ -125,7 +143,16 @@ pub fn manual_download_url(src: &UpdateSource) -> Option<String> {
 }
 
 pub fn map_updater_err(e: tauri_plugin_updater::Error) -> AppError {
-    AppError::Other(format!("检查或安装更新失败：{e}"))
+    AppError::Other(format!(
+        "检查或安装更新失败：{e}。直连失败时可在设置 → 关于与更新 → 网络代理 中配置代理"
+    ))
+}
+
+fn map_proxy_err(e: AppError) -> AppError {
+    match e {
+        AppError::Invalid(m) | AppError::Other(m) => AppError::Other(m),
+        other => other,
+    }
 }
 
 fn is_absent_release(e: &tauri_plugin_updater::Error) -> bool {
@@ -157,9 +184,19 @@ fn no_update(
     }
 }
 
-async fn fetch_latest_github_tag(repo: &str, include_prerelease: bool) -> Result<Option<String>> {
+async fn fetch_latest_github_tag(
+    repo: &str,
+    include_prerelease: bool,
+    proxy: Option<&NetworkProxy>,
+) -> Result<Option<String>> {
     let url = format!("https://api.github.com/repos/{repo}/releases?per_page=15");
-    let client = reqwest::Client::new();
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15));
+    if let Some(p) = proxy {
+        builder = net::apply_reqwest_async(builder, p)?;
+    }
+    let client = builder
+        .build()
+        .map_err(|e| AppError::Other(format!("HTTP 客户端构建失败：{e}")))?;
     let resp = client
         .get(&url)
         .header("User-Agent", "git-account-manager")
