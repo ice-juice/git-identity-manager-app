@@ -10,10 +10,6 @@ sudo apt-get install -y \
   libssl-dev \
   libxdo-dev \
   pkg-config \
-  libclang-dev \
   libxcb1-dev \
   libxrandr-dev \
-  libdbus-1-dev \
-  libpipewire-0.3-dev \
-  libwayland-dev \
-  libegl-dev
+  libdbus-1-dev

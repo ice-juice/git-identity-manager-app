@@ -72,6 +72,14 @@ pub fn import_from_image(bytes: &[u8]) -> Result<ParsedOtpauth> {
     parse_otpauth(&uris[0])
 }
 
+#[cfg(target_os = "linux")]
+pub fn scan_screen() -> Result<Vec<ScreenHit>> {
+    Err(AppError::Other(
+        "当前 Linux 安装包未包含屏幕扫码（系统截屏库与 Ubuntu 22.04 不兼容）。请改用图片或 otpauth URI 导入。".into(),
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn scan_screen() -> Result<Vec<ScreenHit>> {
     let monitors = xcap::Monitor::all().map_err(|e| AppError::Other(format!("截屏失败：{e}")))?;
     let mut hits = Vec::new();
@@ -106,7 +114,11 @@ pub fn scan_screen() -> Result<Vec<ScreenHit>> {
 pub fn render_otpauth_png_b64(uri: &str) -> Result<String> {
     let code = qrcode::QrCode::new(uri.as_bytes())
         .map_err(|_| AppError::Invalid("无法生成二维码（内容过长或非法）".into()))?;
-    let img = code.render::<image::Luma<u8>>().quiet_zone(true).min_dimensions(240, 240).build();
+    let img = code
+        .render::<image::Luma<u8>>()
+        .quiet_zone(true)
+        .min_dimensions(240, 240)
+        .build();
     let mut png = Vec::new();
     {
         let mut cursor = std::io::Cursor::new(&mut png);
@@ -115,4 +127,15 @@ pub fn render_otpauth_png_b64(uri: &str) -> Result<String> {
     }
     use base64::Engine;
     Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_scan_screen_explains_fallback() {
+        let err = super::scan_screen().expect_err("linux build must not call xcap");
+        let msg = err.to_string();
+        assert!(msg.contains("图片") || msg.contains("URI"));
+    }
 }

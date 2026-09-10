@@ -1,4 +1,4 @@
-# 推 dest / release 时只跑跨平台 cargo test，约 3–6 分钟出结论。
+# 推 dev / release 时只跑跨平台 cargo test，约 3–6 分钟出结论。
 # 不要在这里打包。打 v* 标签后的出包见 release.yml。
 name: Test
 

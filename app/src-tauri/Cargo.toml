@@ -59,6 +59,9 @@ sha1 = "0.10"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "ico", "bmp", "gif"] }
 rqrr = "0.8"
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
+# Linux 不编 xcap：它强制拉 pipewire 0.10 / libspa，和 Ubuntu 22.04 的头文件对不上。
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 xcap = "0.9"
 
 [target.'cfg(windows)'.dependencies]
