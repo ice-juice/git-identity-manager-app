@@ -14,6 +14,7 @@ export interface VaultStatus {
   workspaceId: string | null;
   autoLockMinutes: number;
   launchAtLogin: boolean;
+  launchAtLoginSupported?: boolean;
   graceDays: number;
   graceActive: boolean;
   graceExpiresAt: string | null;

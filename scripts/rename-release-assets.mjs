@@ -47,6 +47,7 @@ export function stampLocaleFilename(name, locale) {
   if (stem.startsWith("-") || stem.startsWith("_") || /^\d/.test(stem)) {
     stem = `${BRAND}_${stem.replace(/^[-_]+/, "")}`;
   }
+  stem = stem.replace(/^御钥师[._]?/, `${BRAND}_`);
   stem = stem.replace(/^Git\.?Keymaster\.?/i, `${BRAND}_`);
   stem = stem.replace(/_+/g, "_").replace(/_$/g, "");
 
@@ -163,6 +164,9 @@ function runSelfTest() {
     ["Git.Keymaster_1.2.0_universal.dmg", "zh-CN", "Git.Keymaster_1.2.0_universal_zh-CN.dmg"],
     ["Git.Keymaster_universal.app.tar.gz", "en-US", "Git.Keymaster_universal_en-US.app.tar.gz"],
     ["Git.Keymaster_1.2.0_universal.app.tar.gz.sig", "zh-CN", "Git.Keymaster_1.2.0_universal_zh-CN.app.tar.gz.sig"],
+    ["御钥师_1.3.0_universal.dmg", "zh-CN", "Git.Keymaster_1.3.0_universal_zh-CN.dmg"],
+    ["御钥师_1.3.0_x64-setup.exe", "zh-CN", "Git.Keymaster_1.3.0_x64_zh-CN-setup.exe"],
+    ["Git Keymaster_1.3.0_universal.dmg", "en-US", "Git.Keymaster_1.3.0_universal_en-US.dmg"],
     ["latest.json", "zh-CN", "latest.json"],
   ];
   for (const [input, locale, expected] of cases) {

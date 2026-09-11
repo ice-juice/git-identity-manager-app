@@ -31,7 +31,7 @@ import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 import { THEME_OPTIONS } from "../lib/theme";
 import { UNLOCK_ANIM_STYLES } from "../lib/prefs";
-import { PageHead, Card, FieldLabel, Badge } from "../ui/common";
+import { PageHead, Card, FieldLabel, Badge, ErrorDialog } from "../ui/common";
 
 function closeActionLabel(action: "tray" | "quit" | null | undefined): string {
   if (action === "tray") return "自动最小化到托盘";
@@ -117,7 +117,7 @@ function GithubPatSettings({ writesLocked }: { writesLocked: boolean }) {
 
   return (
     <div className="stack">
-      {err && <div className="err-text">{err}</div>}
+      <ErrorDialog message={err} onClose={() => setErr("")} />
       {msg && <div className="callout info">{msg}</div>}
       <div className="muted" style={{ fontSize: 12 }}>
         用于自动把公钥添加到 GitHub，以及导入组织列表。请创建 classic token，勾选{" "}
@@ -191,10 +191,10 @@ function FactoryResetPanel({ onDone }: { onDone: () => Promise<void> }) {
 
   return (
     <div className="stack">
+      <ErrorDialog message={err} onClose={() => setErr("")} />
       <div className="callout danger">
         ⚠️ 将清空工作空间数据、还原 ~/.ssh 入口、撤销本程序写入的用户环境变量与 Git/终端挂钩，并删除本机配置。云端数据不会删除。此操作不可撤销。
       </div>
-      {err && <div className="err-text">{err}</div>}
       {stage === "idle" ? (
         <div>
           <button type="button" className="btn danger sm" disabled={busy} onClick={() => setStage("confirm")}>
@@ -400,7 +400,7 @@ function NetworkProxyCard() {
   return (
     <Card title="网络代理">
       <div className="stack">
-        {err && <div className="err-text">{err}</div>}
+        <ErrorDialog message={err} onClose={() => setErr("")} />
         {msg && <div className="callout info">{msg}</div>}
         <div className="field">
           <div className="between">
@@ -685,7 +685,7 @@ function AboutUpdateCard() {
     <div className="stack-lg">
       <Card title="应用与系统信息">
         <div className="stack">
-          {err && <div className="err-text">{err}</div>}
+          <ErrorDialog message={err} onClose={() => setErr("")} />
           {msg && <div className="callout info">{msg}</div>}
           <div className="kv">
             <span className="muted">当前版本</span>
@@ -909,7 +909,7 @@ function SecurityChecklistCard({
       }
     >
       <div className="stack">
-        {err && <div className="err-text">{err}</div>}
+        <ErrorDialog message={err} onClose={() => setErr("")} />
         {badge && (
           <div className="kv">
             <span className="muted">当前状态</span>
@@ -1138,7 +1138,7 @@ export function Settings() {
     <div className="stack-lg">
       <PageHead title="设置" desc="工作空间安全、应用偏好与账户配置" />
 
-      {err && <div className="err-text">{err}</div>}
+      <ErrorDialog message={err} onClose={() => setErr("")} />
       {msg && <div className="callout info">{msg}</div>}
 
       <div className="settings-layout">
@@ -1315,14 +1315,18 @@ export function Settings() {
                       <div>
                         <FieldLabel
                           name="开机自启动"
-                          tip="写入当前 Windows 用户的开机启动项。登录后自动打开本软件；若同时开启了免验证，会尝试把密钥加载进 ssh-agent。"
+                          tip="登录系统后自动打开本软件。Windows 写入当前用户启动项，macOS 写入登录启动项。若同时开启了免验证，会尝试把密钥加载进 ssh-agent。"
                         />
-                        <div className="hint">示例：出差换电脑后重新装好，再打开此项；默认关闭。</div>
+                        <div className="hint">
+                          {status?.launchAtLoginSupported === false
+                            ? "当前系统暂不支持开机自启动。"
+                            : "示例：出差换电脑后重新装好，再打开此项；默认关闭。"}
+                        </div>
                       </div>
                       <button
                         type="button"
                         className={"switch" + (status?.launchAtLogin ? "" : " off")}
-                        disabled={busy}
+                        disabled={busy || status?.launchAtLoginSupported === false}
                         onClick={() => toggleLaunch(!status?.launchAtLogin)}
                       />
                     </div>

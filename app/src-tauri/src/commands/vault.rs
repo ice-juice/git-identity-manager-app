@@ -21,6 +21,7 @@ pub struct VaultStatus {
     pub workspace_id: Option<String>,
     pub auto_lock_minutes: u32,
     pub launch_at_login: bool,
+    pub launch_at_login_supported: bool,
     pub grace_days: u32,
     pub grace_active: bool,
     pub grace_expires_at: Option<String>,
@@ -72,11 +73,14 @@ pub fn vault_status(state: State<AppState>) -> VaultStatus {
         workspace_id,
         auto_lock_minutes,
         launch_at_login,
+        launch_at_login_supported: autostart::is_supported(),
         grace_days,
         grace_active: grace.active,
         grace_expires_at: grace.expires_at,
         close_action,
-        writes_locked: state.writes_locked.load(std::sync::atomic::Ordering::SeqCst),
+        writes_locked: state
+            .writes_locked
+            .load(std::sync::atomic::Ordering::SeqCst),
         startup_note: state.startup_note.lock().ok().and_then(|n| n.clone()),
     }
 }
@@ -111,7 +115,11 @@ pub fn check_workspace_path(path: String) -> PathCheck {
 
 /// 初始化工作空间。会做 Argon2id 运行时标定（略慢，属正常）。
 #[tauri::command(async)]
-pub fn vault_init(state: State<'_, AppState>, path: String, password: String) -> Result<InitResult> {
+pub fn vault_init(
+    state: State<'_, AppState>,
+    path: String,
+    password: String,
+) -> Result<InitResult> {
     let root = PathBuf::from(&path);
     let kdf: KdfParams = calibrate(DEFAULT_TARGET_MS);
     let (vault, recovery_key) = Vault::init(&root, &password, kdf)?;
@@ -206,7 +214,11 @@ pub fn vault_unlock(app: AppHandle, state: State<'_, AppState>, password: String
 
 /// 用恢复密钥解锁（忘记密码/换机）。
 #[tauri::command(async)]
-pub fn vault_unlock_recovery(app: AppHandle, state: State<'_, AppState>, recovery_key: String) -> Result<()> {
+pub fn vault_unlock_recovery(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    recovery_key: String,
+) -> Result<()> {
     ensure_loaded(&state)?;
     let mut vault = recover_lock(&state.vault);
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
@@ -263,7 +275,9 @@ pub fn lock_in_memory(state: &AppState) {
         v.lock();
     }
     crate::commands::clear_reveal_grace(state);
-    state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    state
+        .writes_locked
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut n) = state.startup_note.lock() {
         *n = None;
     }
@@ -308,7 +322,11 @@ pub fn try_grace_unlock_silent(state: &AppState) -> bool {
 
 /// 修改访问密码（需正确旧密码）。
 #[tauri::command]
-pub fn change_password(state: State<AppState>, old_password: String, new_password: String) -> Result<()> {
+pub fn change_password(
+    state: State<AppState>,
+    old_password: String,
+    new_password: String,
+) -> Result<()> {
     ensure_loaded(&state)?;
     let mut vault = recover_lock(&state.vault);
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
@@ -396,7 +414,9 @@ pub fn vault_try_grace_unlock(app: AppHandle, state: State<'_, AppState>) -> Res
 }
 
 fn begin_write_lock(state: &AppState, app: &AppHandle, note: &str) {
-    state.writes_locked.store(true, std::sync::atomic::Ordering::SeqCst);
+    state
+        .writes_locked
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut n) = state.startup_note.lock() {
         *n = Some(note.to_string());
     }
@@ -407,11 +427,16 @@ fn begin_write_lock(state: &AppState, app: &AppHandle, note: &str) {
 }
 
 fn end_write_lock(state: &AppState, app: &AppHandle) {
-    state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    state
+        .writes_locked
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut n) = state.startup_note.lock() {
         *n = None;
     }
-    let _ = app.emit("writes-lock", serde_json::json!({ "locked": false, "note": null }));
+    let _ = app.emit(
+        "writes-lock",
+        serde_json::json!({ "locked": false, "note": null }),
+    );
     let _ = app.emit("startup-ready", serde_json::json!({}));
 }
 
@@ -429,12 +454,20 @@ fn set_startup_note(state: &AppState, app: &AppHandle, note: &str) {
 pub(crate) fn schedule_after_unlock(app: AppHandle) {
     let state = app.state::<AppState>();
     begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
-    if state.bootstrap_busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    if state
+        .bootstrap_busy
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
         return;
     }
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
-        if let Some(p) = state.config.lock().ok().and_then(|c| c.workspace_path.clone()) {
+        if let Some(p) = state
+            .config
+            .lock()
+            .ok()
+            .and_then(|c| c.workspace_path.clone())
+        {
             let _ = crate::sys::adopt_ssh_config(std::path::Path::new(&p));
         }
         set_startup_note(&state, &app, "正在从云端拉取身份数据…");
@@ -443,7 +476,9 @@ pub(crate) fn schedule_after_unlock(app: AppHandle) {
         let vault_clone = match state.vault.lock() {
             Ok(g) => g.as_ref().filter(|v| v.is_unlocked()).cloned(),
             Err(_) => {
-                state.bootstrap_busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                state
+                    .bootstrap_busy
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
                 end_write_lock(&state, &app);
                 return;
             }
@@ -453,7 +488,9 @@ pub(crate) fn schedule_after_unlock(app: AppHandle) {
         }
         set_startup_note(&state, &app, "正在加载 ssh-agent…");
         load_agent_best_effort(&state);
-        state.bootstrap_busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        state
+            .bootstrap_busy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         let still_unlocked = state
             .vault
             .lock()
@@ -464,7 +501,9 @@ pub(crate) fn schedule_after_unlock(app: AppHandle) {
             end_write_lock(&state, &app);
             crate::update::scheduler::kick_after_unlock(app.clone());
         } else {
-            state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+            state
+                .writes_locked
+                .store(false, std::sync::atomic::Ordering::SeqCst);
         }
     });
 }
@@ -501,7 +540,16 @@ pub struct FactoryResetReport {
 
 fn wipe_workspace_files(root: &std::path::Path) -> Vec<String> {
     let mut steps = Vec::new();
-    for name in ["vault.json", "data", "keys", "backups", "sync", "ssh-keys", "ssh", "audit.log"] {
+    for name in [
+        "vault.json",
+        "data",
+        "keys",
+        "backups",
+        "sync",
+        "ssh-keys",
+        "ssh",
+        "audit.log",
+    ] {
         let path = root.join(name);
         if path.is_dir() {
             if std::fs::remove_dir_all(&path).is_ok() {
@@ -525,7 +573,9 @@ pub fn factory_reset(
         return Err(AppError::Invalid("请先确认要清空还原本程序".into()));
     }
     if confirm_phrase.trim() != "清空" {
-        return Err(AppError::Invalid("请输入「清空」以确认不可恢复的还原".into()));
+        return Err(AppError::Invalid(
+            "请输入「清空」以确认不可恢复的还原".into(),
+        ));
     }
 
     let mut steps = Vec::new();
@@ -576,7 +626,9 @@ pub fn factory_reset(
         *recover_lock(&state.config) = cfg;
     }
     recover_lock(&state.unlock_guard).reset();
-    state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    state
+        .writes_locked
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut note) = state.startup_note.lock() {
         *note = None;
     }

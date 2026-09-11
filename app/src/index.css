@@ -854,6 +854,18 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
 }
 .close-dialog-remember input { width: 14px; height: 14px; accent-color: #0066cc; }
 
+.settings-error-dialog { width: 400px; }
+.settings-error-text {
+  font-size: 13.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.settings-error-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .env-unify-dialog { width: 480px; }
 .env-unify-list {
   margin: 0 0 8px;

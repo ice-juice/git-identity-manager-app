@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { CircleHelp } from "lucide-react";
 
@@ -113,4 +113,55 @@ export function Empty({ icon = "📭", text }: { icon?: string; text: string }) 
 
 export function Badge({ kind = "muted", children }: { kind?: string; children: ReactNode }) {
   return <span className={"badge " + kind}>{children}</span>;
+}
+
+/** 设置等页面的错误提示：居中弹窗，避免顶部一行红字被忽略。 */
+export function ErrorDialog({
+  title = "操作未能完成",
+  message,
+  onClose,
+}: {
+  title?: string;
+  message: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!message) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [message, onClose]);
+
+  if (!message) return null;
+  return createPortal(
+    <div
+      className="close-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="error-dialog-title"
+      onClick={onClose}
+    >
+      <div className="close-dialog settings-error-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="close-dialog-titlebar">
+          <span id="error-dialog-title">{title}</span>
+          <button type="button" className="close-dialog-x" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+        <div className="close-dialog-body">
+          <div className="close-dialog-content">
+            <div className="settings-error-text">{message}</div>
+          </div>
+        </div>
+        <div className="close-dialog-footer settings-error-actions">
+          <button type="button" className="btn primary sm" onClick={onClose} autoFocus>
+            知道了
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
 }

@@ -9,14 +9,32 @@ const rootDir = path.resolve(__dirname, "..");
 const lang = (process.argv[2] || "zh").toLowerCase();
 const locale = lang === "en" ? "en-US" : "zh-CN";
 
+function upsertPlistString(xml, key, value) {
+  const re = new RegExp(`(<key>${key}</key>\\s*<string>)([^<]*)(</string>)`);
+  if (re.test(xml)) {
+    return xml.replace(re, `$1${value}$3`);
+  }
+  return xml.replace("</dict>", `\t<key>${key}</key>\n\t<string>${value}</string>\n</dict>`);
+}
+
 const tauriConfPath = path.join(rootDir, "app", "src-tauri", "tauri.conf.json");
 const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf-8"));
 
-// 安装包文件名必须用 ASCII。界面标题仍按语言区分。
+// 安装包文件名由 rename-release-assets.mjs 统一成 ASCII 的 Git.Keymaster_*。
+// productName 才是桌面快捷方式、开始菜单、macOS Dock / 程序坞上的显示名。
 tauriConf.mainBinaryName = "git-account-manager";
-tauriConf.productName = "Git.Keymaster";
+const displayName = lang === "en" ? "Git Keymaster" : "御钥师";
+tauriConf.productName = displayName;
 if (tauriConf.app && tauriConf.app.windows && tauriConf.app.windows[0]) {
-  tauriConf.app.windows[0].title = lang === "en" ? "Git Keymaster" : "御钥师";
+  tauriConf.app.windows[0].title = displayName;
+}
+
+const infoPlistPath = path.join(rootDir, "app", "src-tauri", "Info.plist");
+if (fs.existsSync(infoPlistPath)) {
+  let plist = fs.readFileSync(infoPlistPath, "utf-8");
+  plist = upsertPlistString(plist, "CFBundleDisplayName", displayName);
+  plist = upsertPlistString(plist, "CFBundleName", displayName);
+  fs.writeFileSync(infoPlistPath, plist, "utf-8");
 }
 
 tauriConf.bundle = tauriConf.bundle || {};
