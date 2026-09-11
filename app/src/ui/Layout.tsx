@@ -10,17 +10,15 @@ import {
   Cloud,
   Settings as SettingsIcon,
   Lock,
-  Sun,
-  Moon,
-  Palette,
+  Timer,
+  UserRound,
 } from "lucide-react";
 import { api } from "../lib/ipc";
 import { useApp } from "../store";
-import { AppLogo } from "./AppLogo";
+import { UpdateToast } from "./UpdateToast";
 
 export function Layout({ children }: { children: ReactNode }) {
-  const { status, lock, theme, toggleTheme, writesLocked, startupNote } = useApp();
-  const themeLabel = theme === "light" ? "浅色" : theme === "dark" ? "深色" : "黛蓝";
+  const { status, lock, writesLocked, startupNote } = useApp();
   const [idCount, setIdCount] = useState<number | null>(null);
   const [keyCount, setKeyCount] = useState<number | null>(null);
   const [repoCount, setRepoCount] = useState<number | null>(null);
@@ -29,15 +27,11 @@ export function Layout({ children }: { children: ReactNode }) {
     let unmounted = false;
     (async () => {
       try {
-        const [ids, ks, repos] = await Promise.all([
-          api.listIdentities(),
-          api.listKeys(),
-          api.listManagedRepos().catch(() => []),
-        ]);
+        const counts = await api.workspaceNavCounts();
         if (!unmounted) {
-          setIdCount(ids.length);
-          setKeyCount(ks.length);
-          setRepoCount(repos.length);
+          setIdCount(counts.identities);
+          setKeyCount(counts.keys);
+          setRepoCount(counts.repos);
         }
       } catch {
         /* 忽略 */
@@ -48,14 +42,6 @@ export function Layout({ children }: { children: ReactNode }) {
     };
   }, [status?.unlocked, writesLocked]);
 
-  // 从工作空间路径提取简洁名称，例如 "D:/gitIdentifyData" -> "gitIdentifyData"
-  const workspaceDisplay = (() => {
-    if (!status?.workspacePath) return "加密工作空间";
-    const p = status.workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
-    const parts = p.split("/");
-    return parts[parts.length - 1] || "工作空间";
-  })();
-
   const NAV = [
     { to: "/", label: "身份总览", icon: LayoutDashboard, end: true, badge: idCount },
     { to: "/keys", label: "密钥管理", icon: KeyRound, badge: keyCount },
@@ -63,6 +49,8 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: "/agent", label: "Agent", icon: Cpu },
     { to: "/repos", label: "仓库管理", icon: FolderGit2, badge: repoCount },
     { to: "/clone", label: "克隆仓库", icon: Download },
+    { to: "/totp", label: "2FA / TOTP", icon: Timer },
+    { to: "/accounts", label: "隐私账号", icon: UserRound },
     { to: "/sync", label: "云端同步", icon: Cloud },
   ];
 
@@ -70,13 +58,6 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="window">
       <div className="body">
         <aside className="sidebar">
-          <div className="brand">
-            <AppLogo size={28} />
-            <div className="name">
-              账号管理器
-              <small>{workspaceDisplay} 的工作空间</small>
-            </div>
-          </div>
           <div className="nav-group">导航菜单</div>
           {NAV.map((n) => {
             const Icon = n.icon;
@@ -125,29 +106,6 @@ export function Layout({ children }: { children: ReactNode }) {
         </aside>
 
         <main className="main">
-          <div className="topbar">
-            <div style={{ minWidth: 0 }}>
-              <div className="muted" style={{ fontSize: 10 }}>工作空间</div>
-              <div className="path-clip" title={status?.workspacePath ?? ""}>
-                {status?.workspacePath ?? "—"}
-              </div>
-            </div>
-            <div className="spacer" />
-            <button
-              type="button"
-              className="btn ghost sm"
-              style={{ display: "inline-flex", gap: 5, padding: "2px 7px" }}
-              title={`当前主题：${themeLabel}（点击切换风格）`}
-              onClick={toggleTheme}
-            >
-              {theme === "light" ? <Sun size={13} /> : theme === "dark" ? <Moon size={13} /> : <Palette size={13} />}
-              <span style={{ fontSize: 11 }}>{themeLabel}</span>
-            </button>
-            <div className="dot4">
-              <span className="led g" />
-              已解锁
-            </div>
-          </div>
           <div className="content">
             {writesLocked && (
               <div className="startup-lock-bar" role="status">
@@ -159,6 +117,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </main>
       </div>
+      <UpdateToast />
     </div>
   );
 }

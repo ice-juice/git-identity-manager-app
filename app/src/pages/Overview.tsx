@@ -23,6 +23,7 @@ import {
   type UpdateIdentityArgs,
 } from "../lib/ipc";
 import { PageHead, Empty, Badge } from "../ui/common";
+import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 
 // 根据身份名称生成高质感头像背景色
@@ -74,14 +75,14 @@ export function Overview() {
   } | null>(null);
   const [deletingIdentity, setDeletingIdentity] = useState<Identity | null>(null);
 
-  // 加载全量数据
+  // 加载全量数据。切页/同步锁变化时不要 agentEnsure 或改写 SSH，那会在 macOS 上卡死主线程。
   const loadData = async () => {
     try {
       setErr("");
       const [ids, ks, ag, cfg] = await Promise.all([
         api.listIdentities(),
         api.listKeys(),
-        api.agentEnsure().catch(() => api.agentStatus().catch(() => null)),
+        api.agentStatus().catch(() => null),
         api.readSshConfig().catch(() => null),
       ]);
       setIdentities(ids);
@@ -95,6 +96,16 @@ export function Overview() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    if (writesLocked) return;
+    Promise.all([api.listIdentities(), api.listKeys()])
+      .then(([ids, ks]) => {
+        setIdentities(ids);
+        setKeys(ks);
+      })
+      .catch(() => {});
   }, [writesLocked]);
 
   // 复制公钥
@@ -102,7 +113,7 @@ export function Overview() {
     if (!keyId) return;
     const k = keys.find((item) => item.id === keyId);
     if (!k || !k.publicOpenssh) return;
-    await navigator.clipboard.writeText(k.publicOpenssh.trim());
+    await writeClipboard(k.publicOpenssh.trim());
     setCopiedKeyId(keyId);
     setTimeout(() => setCopiedKeyId(null), 1800);
   };
@@ -549,8 +560,8 @@ export function Overview() {
                     <span
                       style={{
                         overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        textOverflow: calloutContent.text.includes("\n") ? undefined : "ellipsis",
+                        whiteSpace: calloutContent.text.includes("\n") ? "pre-wrap" : "nowrap",
                         flex: 1,
                       }}
                       title={calloutContent.text}

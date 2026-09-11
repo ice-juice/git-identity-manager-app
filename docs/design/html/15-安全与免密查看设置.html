@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>安全与免密查看时效设置 - 设计原型</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div class="window">
+  <!-- 窗口标题栏 -->
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title">Git 多账号管理器</span>
+    <span class="spacer"></span>
+    <span class="lockstate"><span class="lk"></span>已解锁</span>
+  </div>
+
+  <div class="body">
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+      <div class="brand">
+        <div class="logo">🔑</div>
+        <div class="name">账号管理器<small>juice 的工作空间</small></div>
+      </div>
+      <div class="nav-item"><span class="ic">▣</span>身份总览<span class="badge">3</span></div>
+      <div class="nav-item"><span class="ic">🔐</span>密钥管理<span class="badge">4</span></div>
+      <div class="nav-item"><span class="ic">⚙</span>SSH 配置</div>
+      <div class="nav-item"><span class="ic">◈</span>Agent</div>
+      <div class="nav-item"><span class="ic">◨</span>仓库与克隆</div>
+      <div class="nav-group">机密资产</div>
+      <div class="nav-item"><span class="ic">⏱</span>2FA / TOTP<span class="badge">6</span></div>
+      <div class="nav-item"><span class="ic">👤</span>隐私账号<span class="badge">8</span></div>
+      <div class="nav-item"><span class="ic">☁</span>云同步</div>
+      <div class="grow"></div>
+      <div class="side-foot">
+        <div class="nav-item active"><span class="ic">⚙</span>设置</div>
+        <div class="nav-item"><span class="ic">🔒</span>立即锁定</div>
+      </div>
+    </div>
+
+    <!-- 主区 -->
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <h1>系统设置</h1>
+          <div class="sub">安全与二次验证 · 免密查看时效 · 网络代理 · 剪贴板保护</div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="grid c2">
+          
+          <!-- 左栏：核心安全与免密查看时效配置 -->
+          <div class="card card-pad">
+            <div class="section-title">🛡️ 机密二次验证与免密查看时效 (Reveal Grace)</div>
+
+            <div class="row between" style="padding:10px 0;">
+              <div>
+                <div style="font-weight:500;">查看 TOTP / 密码免密时效</div>
+                <div class="muted" style="font-size:12px;">首次验证后在此时间内免再次输入密码，提升查看体验</div>
+              </div>
+              <select class="input" style="width:160px; font-weight:600; color:var(--accent-strong);">
+                <option>5 分钟 (推荐) ▾</option>
+                <option>每次查看都验证 (0分钟)</option>
+                <option>1 分钟</option>
+                <option>15 分钟</option>
+                <option>30 分钟</option>
+              </select>
+            </div>
+
+            <div class="callout info" style="font-size:12px; margin-bottom:12px;">
+              <span>ℹ️</span>
+              <div><b>内存级隔离设计</b>：免密窗口仅保存在当前进程内存中，一旦工作空间锁定、系统休眠或退出程序立即销毁。</div>
+            </div>
+
+            <div class="row between" style="padding:10px 0; border-top:1px solid var(--border);">
+              <div>
+                <div style="font-weight:500;">取回 TOTP 原始密钥 / 导出二维码强制重认证</div>
+                <div class="muted" style="font-size:12px;">导出完整种子为高危操作，不吃免密时效</div>
+              </div>
+              <span class="badge2 r">强制开启 (不可关闭)</span>
+            </div>
+
+            <div class="row between" style="padding:10px 0; border-top:1px solid var(--border);">
+              <div>
+                <div style="font-weight:500;">敏感机密复制后剪贴板自动清空</div>
+                <div class="muted" style="font-size:12px;">复制 TOTP 验证码、账号密码后倒计时清除</div>
+              </div>
+              <select class="input" style="width:140px;">
+                <option>20 秒 (默认) ▾</option>
+                <option>10 秒</option>
+                <option>60 秒</option>
+                <option>从不清空 (不推荐)</option>
+              </select>
+            </div>
+
+            <div class="row between" style="padding:10px 0; border-top:1px solid var(--border);">
+              <div>
+                <div style="font-weight:500;">账号密码历史版本保留上限</div>
+                <div class="muted" style="font-size:12px;">每个账号自动留存的旧密码最大数量</div>
+              </div>
+              <select class="input" style="width:120px;">
+                <option>10 条 (默认) ▾</option>
+                <option>5 条</option>
+                <option>20 条</option>
+              </select>
+            </div>
+
+            <!-- 主密码与锁定 -->
+            <div class="section-title" style="margin-top:20px;">🔒 工作空间主访问凭据</div>
+            <div class="row between" style="padding:8px 0;">
+              <div><div>工作空间主访问密码</div><div class="muted" style="font-size:12px">用于派生主密钥与数据加密</div></div>
+              <button class="btn sm">修改主密码</button>
+            </div>
+            <div class="row between" style="padding:8px 0; border-top:1px solid var(--border);">
+              <div><div>数据恢复密钥 (Recovery Key)</div><div class="muted" style="font-size:12px">忘记密码时找回，重新生成后旧密钥作废</div></div>
+              <button class="btn sm">轮换恢复密钥</button>
+            </div>
+            <div class="row between" style="padding:8px 0; border-top:1px solid var(--border);">
+              <div><div>无操作自动锁定时长</div></div>
+              <select class="input" style="width:120px;"><option>15 分钟 ▾</option><option>30 分钟</option><option>永不锁定</option></select>
+            </div>
+            <div class="row between" style="padding:8px 0; border-top:1px solid var(--border);">
+              <div>系统休眠 / 锁屏时立即锁定</div>
+              <div class="switch"></div>
+            </div>
+          </div>
+
+          <!-- 右栏：网络代理与工作空间 -->
+          <div class="card card-pad">
+            <div class="section-title">🌐 网络代理设置 (Proxy)</div>
+            <div class="row between" style="padding:8px 0;">
+              <div><div>启用网络代理</div><div class="muted" style="font-size:12px">用于 GitHub / 2FA Favicon 抓取 / 更新检查</div></div>
+              <div class="switch"></div>
+            </div>
+            <div class="grid c2" style="gap:10px; margin-top:8px;">
+              <div class="field" style="margin:0;"><label style="font-size:12px;">代理协议</label>
+                <select class="input" style="padding:6px 10px;"><option>HTTP</option><option>SOCKS5</option></select>
+              </div>
+              <div class="field" style="margin:0;"><label style="font-size:12px;">服务器与端口</label>
+                <input class="input mono" value="127.0.0.1:7890" style="padding:6px 10px;">
+              </div>
+            </div>
+
+            <div class="section-title" style="margin-top:24px;">📁 加密工作空间存储</div>
+            <div class="field">
+              <label>当前工作空间路径</label>
+              <input class="input mono" value="D:\GitVault" readonly style="background:#f1f5f9;">
+            </div>
+
+            <div class="section-title" style="margin-top:20px;">🧾 安全操作审计日志 (最近事件)</div>
+            <div class="code" style="font-size:11.5px; max-height:160px; overflow-y:auto;"><span class="c">14:20:10</span> 二次验证查看账号密码 (id=acc-github-techn, 免密窗口已激活 5m)
+<span class="c">14:18:02</span> 屏幕扫码导入 2 个 TOTP 条目 (GitHub, AWS)
+<span class="c">13:50:33</span> 二次验证查看 TOTP 原始密钥与导出二维码 (id=totp-gh-01)
+<span class="c">12:31:04</span> 写入 ~/.ssh/config 托管区块
+<span class="c">12:27:40</span> 解锁加密工作空间 (juice-vault)</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

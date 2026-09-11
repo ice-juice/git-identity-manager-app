@@ -66,7 +66,7 @@ impl Vault {
             return Err(AppError::AlreadyInitialized(root.display().to_string()));
         }
         std::fs::create_dir_all(root)?;
-        for sub in ["data", "keys", "backups", "sync", "ssh-keys", "ssh"] {
+        for sub in ["data", "keys", "backups", "sync", "ssh-keys", "ssh", "icons"] {
             std::fs::create_dir_all(root.join(sub))?;
         }
 
@@ -209,6 +209,46 @@ impl Vault {
         Ok(display)
     }
 
+    /// 仅用于云端预览：用已解开的 MK 构造内存中的 Vault（不落盘）。
+    pub fn from_header_unlocked(header: VaultHeader, mk: MasterKey) -> Self {
+        let mut header = header;
+        header.kdf.clamp_to_safe_bounds();
+        Vault {
+            root: PathBuf::new(),
+            header,
+            mk: Some(mk),
+        }
+    }
+
+    /// 换机恢复：沿用旧工作空间头部与 MK，用新访问密码重新包裹后落盘。
+    /// 恢复信封保持不变，旧恢复密钥在新机器上仍可解锁。
+    pub fn restore(
+        root: &Path,
+        mut header: VaultHeader,
+        mk: MasterKey,
+        new_password: &str,
+    ) -> Result<Self> {
+        if new_password.is_empty() {
+            return Err(AppError::Invalid("访问密码不能为空".into()));
+        }
+        if Self::exists(root) {
+            return Err(AppError::AlreadyInitialized(root.display().to_string()));
+        }
+        std::fs::create_dir_all(root)?;
+        for sub in ["data", "keys", "backups", "sync", "ssh-keys", "ssh", "icons"] {
+            std::fs::create_dir_all(root.join(sub))?;
+        }
+        header.kdf.clamp_to_safe_bounds();
+        header.envelopes.password = envelope::wrap_with_password(&mk, new_password, &header.kdf)?;
+        let vault = Vault {
+            root: root.to_path_buf(),
+            header,
+            mk: Some(mk),
+        };
+        vault.persist_header()?;
+        Ok(vault)
+    }
+
     /// 原子写入 vault.json（临时文件 + rename）。
     fn persist_header(&self) -> Result<()> {
         let path = Self::vault_path(&self.root);
@@ -218,21 +258,59 @@ impl Vault {
 }
 
 /// 原子写：写临时文件后 rename，避免写一半损坏。
+/// Windows 上若目标只读、被短暂锁住或禁止覆盖改名，会清只读、重试，再回退为直接覆盖。
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     let dir = path.parent().ok_or_else(|| AppError::Invalid("无效路径".into()))?;
-    std::fs::create_dir_all(dir)?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| AppError::Io(format!("创建目录 {} 失败：{e}", dir.display())))?;
     let tmp = dir.join(format!(
         ".{}.tmp-{}",
         path.file_name().and_then(|s| s.to_str()).unwrap_or("f"),
         uuid::Uuid::new_v4()
     ));
-    std::fs::write(&tmp, data)?;
-    // Windows 上 rename 覆盖已存在文件会失败，先删旧。
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
+    if let Err(e) = std::fs::write(&tmp, data) {
+        return Err(AppError::Io(format!(
+            "写入临时文件 {} 失败：{e}",
+            tmp.display()
+        )));
     }
-    std::fs::rename(&tmp, path)?;
+    if let Err(e) = replace_file_with_tmp(path, &tmp, data) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(AppError::Io(format!("写入 {} 失败：{e}", path.display())));
+    }
+    let _ = std::fs::remove_file(&tmp);
     Ok(())
+}
+
+fn make_writable(path: &Path) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+}
+
+fn replace_file_with_tmp(path: &Path, tmp: &Path, data: &[u8]) -> std::io::Result<()> {
+    if path.exists() {
+        make_writable(path);
+        for attempt in 0..4 {
+            match std::fs::remove_file(path) {
+                Ok(()) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(_) if attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(20 * (attempt as u64 + 1)));
+                    make_writable(path);
+                }
+                Err(_) => return std::fs::write(path, data),
+            }
+        }
+    }
+    match std::fs::rename(tmp, path) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::write(path, data),
+    }
 }
 
 fn now_iso8601() -> String {
@@ -253,6 +331,23 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("gam-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_and_readonly_file() {
+        let dir = temp_root();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("note.txt");
+        std::fs::write(&path, b"old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).unwrap();
+        atomic_write(&path, b"newer").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"newer");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -361,5 +456,31 @@ mod tests {
         let _ = Vault::init(&root, "pw", fast_kdf()).unwrap();
         assert!(Vault::init(&root, "pw", fast_kdf()).is_err());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn restore_keeps_workspace_id_mk_and_recovery() {
+        let src = temp_root();
+        let (v, rec) = Vault::init(&src, "old-pw", fast_kdf()).unwrap();
+        let ws = v.workspace_id().to_string();
+        let sync_key = v.subkey(crypto::LABEL_SYNC_OBJECT).unwrap();
+        let header = v.header().clone();
+        let mk = MasterKey::from_bytes(v.master_key_bytes().unwrap());
+
+        let dest = temp_root();
+        let restored = Vault::restore(&dest, header, mk, "new-pw").unwrap();
+        assert_eq!(restored.workspace_id(), ws);
+        assert_eq!(restored.subkey(crypto::LABEL_SYNC_OBJECT).unwrap(), sync_key);
+
+        let mut by_pw = Vault::load(&dest).unwrap();
+        assert!(by_pw.unlock_with_password("old-pw").is_err());
+        by_pw.unlock_with_password("new-pw").unwrap();
+
+        let mut by_rec = Vault::load(&dest).unwrap();
+        by_rec.unlock_with_recovery(&rec).unwrap();
+        assert_eq!(by_rec.subkey(crypto::LABEL_SYNC_OBJECT).unwrap(), sync_key);
+
+        std::fs::remove_dir_all(&src).ok();
+        std::fs::remove_dir_all(&dest).ok();
     }
 }

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>自定义图标选择与自动裁剪压缩 - 设计原型</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script>
+    function selectTab(tabName) {
+      document.getElementById('tabBuiltin').style.display = tabName === 'builtin' ? 'block' : 'none';
+      document.getElementById('tabCustom').style.display = tabName === 'custom' ? 'block' : 'none';
+      document.getElementById('btnBuiltin').className = tabName === 'builtin' ? 'group-tab active' : 'group-tab';
+      document.getElementById('btnCustom').className = tabName === 'custom' ? 'group-tab active' : 'group-tab';
+    }
+    function selectIcon(el, name) {
+      document.querySelectorAll('.icon-picker-item').forEach(i => i.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('currentSelectedText').innerText = '当前选用：内置图标 (' + name + ')';
+    }
+  </script>
+</head>
+<body>
+<div class="window">
+  <!-- 窗口标题栏 -->
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title">Git 多账号管理器 - 图标配置与图片优化管道</span>
+    <span class="spacer"></span>
+    <span class="lockstate"><span class="lk"></span>已解锁</span>
+  </div>
+
+  <div class="body" style="background:#cbd5e1; padding:24px; display:flex; align-items:center; justify-content:center;">
+    
+    <!-- 图标选择器弹窗主体 -->
+    <div class="modal-dialog" style="width: 780px; max-width: 95vw; box-shadow: var(--shadow-lg);">
+      <div class="modal-header">
+        <div class="row" style="gap:10px;">
+          <div class="totp-icon" style="width:34px; height:34px; font-size:16px; background:linear-gradient(135deg,#6366f1,#8b5cf6);">🎨</div>
+          <div>
+            <h3 style="margin:0; font-size:15px;">配置平台图标 (Icon)</h3>
+            <div class="muted" style="font-size:11.5px;">为 GitHub / techn4950 选择内置图标或上传自定义图片</div>
+          </div>
+        </div>
+        <button class="btn sm ghost" style="font-size:16px;">✕</button>
+      </div>
+
+      <div class="modal-body" style="padding:20px 24px;">
+        
+        <!-- Tab 切换：内置图标库 / 自定义上传 -->
+        <div class="row between" style="margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:12px;">
+          <div class="group-tabs" style="margin:0;">
+            <div id="btnBuiltin" class="group-tab active" onclick="selectTab('builtin')">🏛️ 内置主流平台库 (32)</div>
+            <div id="btnCustom" class="group-tab" onclick="selectTab('custom')">📤 上传自定义图标 (自动裁剪压缩)</div>
+          </div>
+          <div id="currentSelectedText" class="mono" style="font-size:12px; color:var(--accent-strong); font-weight:600;">当前选用：内置图标 (GitHub)</div>
+        </div>
+
+        <!-- 面板 1：内置主流平台图标库 (零云端存储开销) -->
+        <div id="tabBuiltin" style="display:block;">
+          
+          <div class="row between" style="margin-bottom:12px;">
+            <input class="input" placeholder="🔍 快速搜索内置平台图标 (如 AWS, Google, Cloudflare...)" style="font-size:12.5px; padding:7px 12px; flex:1; max-width:360px;">
+            <span class="badge2 g" style="font-size:11px;">零存储占用 · SVG 矢量高清</span>
+          </div>
+
+          <!-- 内置图标选择网格 -->
+          <div class="icon-picker-grid">
+            
+            <!-- GitHub (已选中) -->
+            <div class="icon-picker-item active" onclick="selectIcon(this, 'GitHub')">
+              <div class="icon-box" style="background:#24292e;">GH</div>
+              <div class="icon-name">GitHub</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'GitLab')">
+              <div class="icon-box" style="background:#fc6d26;">🦊</div>
+              <div class="icon-name">GitLab</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'AWS')">
+              <div class="icon-box" style="background:#ff9900; font-size:12px;">AWS</div>
+              <div class="icon-name">AWS</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Cloudflare')">
+              <div class="icon-box" style="background:#f38020; font-size:12px;">CF</div>
+              <div class="icon-name">Cloudflare</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Google')">
+              <div class="icon-box" style="background:#4285f4;">G</div>
+              <div class="icon-name">Google</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'OpenAI')">
+              <div class="icon-box" style="background:#10a37f; font-size:12px;">AI</div>
+              <div class="icon-name">OpenAI</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Microsoft')">
+              <div class="icon-box" style="background:#00a4ef;">MS</div>
+              <div class="icon-name">Microsoft</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Apple')">
+              <div class="icon-box" style="background:#000000;">🍎</div>
+              <div class="icon-name">Apple</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Docker')">
+              <div class="icon-box" style="background:#2496ed;">🐳</div>
+              <div class="icon-name">Docker</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Vercel')">
+              <div class="icon-box" style="background:#000000;">▲</div>
+              <div class="icon-name">Vercel</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Linux')">
+              <div class="icon-box" style="background:#fcc624; color:#000;">🐧</div>
+              <div class="icon-name">Linux</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Gitee')">
+              <div class="icon-box" style="background:#c71d23;">Gitee</div>
+              <div class="icon-name">Gitee</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'NPM')">
+              <div class="icon-box" style="background:#cb3837; font-size:11px;">npm</div>
+              <div class="icon-name">NPM</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Telegram')">
+              <div class="icon-box" style="background:#229ed9;">TG</div>
+              <div class="icon-name">Telegram</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Discord')">
+              <div class="icon-box" style="background:#5865f2;">DC</div>
+              <div class="icon-name">Discord</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Twitter/X')">
+              <div class="icon-box" style="background:#000000;">𝕏</div>
+              <div class="icon-name">Twitter/X</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Aliyun')">
+              <div class="icon-box" style="background:#ff6a00; font-size:11px;">阿里</div>
+              <div class="icon-name">阿里云</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'TencentCloud')">
+              <div class="icon-box" style="background:#0052d9; font-size:11px;">腾讯</div>
+              <div class="icon-name">腾讯云</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Slack')">
+              <div class="icon-box" style="background:#4a154b;">#</div>
+              <div class="icon-name">Slack</div>
+            </div>
+
+            <div class="icon-picker-item" onclick="selectIcon(this, 'Notion')">
+              <div class="icon-box" style="background:#000000;">N</div>
+              <div class="icon-name">Notion</div>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- 面板 2：自定义上传与自动裁剪压缩管道 (全自动高保真轻量化) -->
+        <div id="tabCustom" style="display:none;">
+          
+          <!-- 上传拖拽区域 -->
+          <div class="icon-drop-zone">
+            <div style="font-size:32px; margin-bottom:8px;">🖼️</div>
+            <div style="font-weight:600; font-size:14px; color:var(--text);">点击选择图片 或 拖拽本地图片文件到此处</div>
+            <div class="muted" style="font-size:12px; margin-top:4px;">
+              支持 PNG、JPG、JPEG、WEBP、SVG、ICO、BMP（任意尺寸均可，程序将自动居中正方形裁剪）
+            </div>
+          </div>
+
+          <!-- 自动裁剪与高压缩结果展示卡片 -->
+          <div class="crop-preview-card">
+            
+            <!-- 裁剪出的 128x128 预览图 -->
+            <div class="crop-avatar-wrap" title="128x128 像素标准方形图标">
+              <!-- 模拟自定义上传的图标 -->
+              <div style="width:100%; height:100%; background:linear-gradient(135deg,#0284c7,#0369a1); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:24px;">
+                VK
+              </div>
+            </div>
+
+            <!-- 优化处理与压缩指标详情 -->
+            <div style="flex:1; min-width:0;">
+              <div class="row between" style="margin-bottom:4px;">
+                <span style="font-weight:600; font-size:13.5px; color:var(--text);">V-Server-Logo-HighRes.png</span>
+                <span class="badge2 g">已完成最大无损压缩</span>
+              </div>
+              
+              <div class="grid c3" style="gap:10px; margin-top:8px; font-size:12px; background:#f8fafc; padding:10px; border-radius:8px; border:1px solid var(--border);">
+                <div>
+                  <div class="muted">原始图片</div>
+                  <div class="mono" style="font-weight:600; color:var(--text-soft);">2048 × 1536 (2.4 MB)</div>
+                </div>
+                <div>
+                  <div class="muted">居中裁剪与缩放</div>
+                  <div class="mono" style="font-weight:600; color:var(--accent-strong);">1:1 ➔ 128 × 128 px</div>
+                </div>
+                <div>
+                  <div class="muted">压缩后落盘体积</div>
+                  <div class="mono" style="font-weight:600; color:#15803d;">3.4 KB (节省 99.8%)</div>
+                </div>
+              </div>
+
+              <div class="row between" style="margin-top:8px; font-size:11.5px; color:var(--text-mute);">
+                <span>🔒 内容寻址哈希：<span class="mono">custom:8f3c2a91e4...</span>（相同图标全局去重）</span>
+                <span>☁️ 极省云端同步流量</span>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn ghost">取消</button>
+        <button class="btn primary">确认应用此图标</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

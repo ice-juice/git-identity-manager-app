@@ -1,7 +1,7 @@
 //! M2 命令层：SSH 资产只读视图 + 外部密钥导入。
 //! 只读命令直接读系统；导入命令把私钥密文写进已解锁的 vault。
 
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::importer::{import_private_key, ImportRequest};
 use crate::model::{Identity, KeyRecord};
@@ -41,19 +41,26 @@ fn workspace_root(state: &AppState) -> Option<std::path::PathBuf> {
 }
 
 /// 读取工作空间 SSH config 正本（不是 ~/.ssh/config 的 Include 入口）。
-#[tauri::command]
-pub fn read_ssh_config(state: State<AppState>) -> Result<ConfigView> {
+/// `repair=true` 才补写 Host / Include；总览等只读入口不要传，避免每次切页卡十几秒。
+#[tauri::command(async)]
+pub fn read_ssh_config(state: State<'_, AppState>, repair: Option<bool>) -> Result<ConfigView> {
     let root = workspace_root(&state).ok_or_else(|| AppError::Invalid("尚未设置工作空间".into()))?;
+    if repair.unwrap_or(false)
+        && !state.writes_locked.load(std::sync::atomic::Ordering::SeqCst)
     {
-        let vault = state.vault.lock().unwrap();
-        if let Some(v) = vault.as_ref() {
-            if v.is_unlocked() && !state.writes_locked.load(std::sync::atomic::Ordering::SeqCst) {
-                let _ = crate::commands::write::reconcile_ssh_hosts(v);
-            }
+        let vault = {
+            let guard = recover_lock(&state.vault);
+            guard
+                .as_ref()
+                .filter(|v| v.is_unlocked())
+                .cloned()
+        };
+        if let Some(v) = vault {
+            let _ = crate::commands::write::reconcile_ssh_hosts(&v);
         }
+        let _ = sys::ensure_home_ssh_bridge(&root);
     }
-    let (path, raw) = sys::read_workspace_ssh_config(&root);
-    let _ = sys::ensure_home_ssh_bridge(&root);
+    let (path, raw) = sys::read_workspace_ssh_config(&root)?;
     let cfg = config::parse(&raw);
     let mut diagnostics = config::diagnose(&cfg, |p| sys::expand_path(p).exists());
     if sys::text_is_include_only(&raw) {
@@ -66,6 +73,25 @@ pub fn read_ssh_config(state: State<AppState>) -> Result<ConfigView> {
                 host: None,
             },
         );
+    }
+    if !sys::text_has_host_blocks(&raw) {
+        if let Ok(vault) = state.vault.lock() {
+            if let Some(v) = vault.as_ref().filter(|v| v.is_unlocked()) {
+                if let Ok(data) = crate::store::load_data(v) {
+                    if data.identities.iter().any(|id| !id.host_alias.trim().is_empty()) {
+                        diagnostics.insert(
+                            0,
+                            Diagnostic {
+                                severity: Severity::Error,
+                                code: "hosts-missing-after-restore".into(),
+                                message: "身份已在库中，但工作空间 ssh/config 没有 Host。请点刷新重试；若仍为空，检查本机是否拒绝写入 ~/.ssh 或工作空间 ssh 目录。".into(),
+                                host: None,
+                            },
+                        );
+                    }
+                }
+            }
+        }
     }
     let system_path = sys::home_ssh_config();
     let dest = sys::workspace_ssh_config(&root);
@@ -112,11 +138,11 @@ pub struct ScannedKey {
 }
 
 /// 扫描 `~/.ssh` 及 config 引用到的外部路径，返回密钥清单。
-#[tauri::command]
-pub fn scan_keys(state: State<AppState>) -> Result<Vec<ScannedKey>> {
+#[tauri::command(async)]
+pub fn scan_keys(state: State<'_, AppState>) -> Result<Vec<ScannedKey>> {
     // 已入库指纹集合（若已解锁）。
     let in_vault: std::collections::HashSet<String> = {
-        let vault = state.vault.lock().unwrap();
+        let vault = recover_lock(&state.vault);
         match vault.as_ref() {
             Some(v) if v.is_unlocked() => crate::store::load_data(v)
                 .map(|d| d.keys.into_iter().map(|k| k.fingerprint).collect())
@@ -143,7 +169,7 @@ pub fn scan_keys(state: State<AppState>) -> Result<Vec<ScannedKey>> {
         }
     }
     // config 中引用到的 IdentityFile 外部路径（读工作空间正本）。
-    let ws = state.config.lock().unwrap().workspace_path.clone();
+    let ws = recover_lock(&state.config).workspace_path.clone();
     let (_, text) = sys::read_canonical_ssh_config(ws.as_deref().map(std::path::Path::new));
     if !text.is_empty() {
         for b in config::parse(&text).blocks {
@@ -188,7 +214,7 @@ pub fn scan_keys(state: State<AppState>) -> Result<Vec<ScannedKey>> {
 }
 
 /// 探测 ssh 工具链（运行 `ssh -V` 解析版本）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_toolchain() -> Toolchain {
     let mut tc = Toolchain::default();
     for (source, path) in toolchain::candidate_paths() {
@@ -210,8 +236,24 @@ pub fn detect_toolchain() -> Toolchain {
             tc.git = Some(bin);
         }
     }
-    // git 实际调用：优先 core.sshCommand / GIT_SSH，否则默认 Git 自带。
-    tc.git_uses = detect_git_ssh().or_else(|| tc.git.as_ref().map(|b| b.path.clone()));
+    // Unix 没有 Git for Windows 那套路径；把本机 / Homebrew OpenSSH 记为首选。
+    if tc.git.is_none() {
+        if let Some(path) = toolchain::find_ssh_tool("ssh") {
+            let ps = path.display().to_string();
+            let version = sys::run(&ps, &["-V"])
+                .ok()
+                .and_then(|(o, e, _)| toolchain::parse_ssh_version(if e.trim().is_empty() { &o } else { &e }));
+            tc.git = Some(SshBinary {
+                path: ps,
+                version,
+                source: toolchain::preferred_ssh_source().into(),
+            });
+        }
+    }
+    // git 实际调用：优先 core.sshCommand / GIT_SSH，否则首选 ssh。
+    tc.git_uses = detect_git_ssh()
+        .or_else(|| tc.git.as_ref().map(|b| b.path.clone()))
+        .or_else(|| tc.system.as_ref().map(|b| b.path.clone()));
     tc
 }
 
@@ -221,7 +263,7 @@ fn detect_git_ssh() -> Option<String> {
             return Some(v);
         }
     }
-    if let Ok((out, _, code)) = sys::run("git", &["config", "--get", "core.sshCommand"]) {
+    if let Ok((out, _, code)) = sys::run_git(&["config", "--get", "core.sshCommand"]) {
         if code == 0 && !out.trim().is_empty() {
             return Some(out.trim().to_string());
         }
@@ -230,19 +272,55 @@ fn detect_git_ssh() -> Option<String> {
 }
 
 /// 列出 vault 中已登记的密钥（需已解锁）。
-#[tauri::command]
-pub fn list_keys(state: State<AppState>) -> Result<Vec<KeyRecord>> {
-    let vault = state.vault.lock().unwrap();
+#[tauri::command(async)]
+pub fn list_keys(state: State<'_, AppState>) -> Result<Vec<KeyRecord>> {
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
-    Ok(crate::store::load_data(v)?.keys)
+    let root = v.root().to_path_buf();
+    let mut keys = crate::store::load_data(v)?.keys;
+    for key in &mut keys {
+        if let Some(p) = &key.deployed_path {
+            key.deployed_path = Some(sys::resolve_identity_file(p, &root));
+        }
+    }
+    Ok(keys)
 }
 
 /// 列出 vault 中的身份（需已解锁）。
-#[tauri::command]
-pub fn list_identities(state: State<AppState>) -> Result<Vec<Identity>> {
-    let vault = state.vault.lock().unwrap();
+#[tauri::command(async)]
+pub fn list_identities(state: State<'_, AppState>) -> Result<Vec<Identity>> {
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
     Ok(crate::store::load_data(v)?.identities)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceNavCounts {
+    pub identities: usize,
+    pub keys: usize,
+    pub repos: usize,
+}
+
+/// 侧栏角标：只读加密库计数，不跑 git / ssh-agent。
+#[tauri::command(async)]
+pub fn workspace_nav_counts(state: State<'_, AppState>) -> Result<WorkspaceNavCounts> {
+    let vault = recover_lock(&state.vault);
+    let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
+    if !v.is_unlocked() {
+        return Err(AppError::Locked);
+    }
+    let data = crate::store::load_data(v)?;
+    let machine_id = crate::app_config::AppConfig::current_machine_id();
+    Ok(WorkspaceNavCounts {
+        identities: data.identities.len(),
+        keys: data.keys.len(),
+        repos: data
+            .repos
+            .iter()
+            .filter(|r| r.machine_id == machine_id || r.machine_id.is_empty())
+            .count(),
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -259,7 +337,7 @@ pub struct ImportArgs {
 #[tauri::command]
 pub fn import_key(app: AppHandle, state: State<AppState>, args: ImportArgs) -> Result<KeyRecord> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let rec = import_private_key(
         v,
@@ -283,7 +361,7 @@ pub fn import_key_from_path(app: AppHandle, state: State<AppState>, path: String
     let private_text = std::fs::read_to_string(&path)?;
     let pub_path = format!("{path}.pub");
     let public_text = std::fs::read_to_string(&pub_path).ok();
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let rec = import_private_key(
         v,
@@ -301,19 +379,19 @@ pub fn import_key_from_path(app: AppHandle, state: State<AppState>, path: String
 }
 
 /// 连接体检：对某个 Host 别名跑 `ssh -T`，解析账号名/错误。
-#[tauri::command]
-pub fn test_connection(state: State<AppState>, host_alias: String) -> Result<AuthResult> {
+#[tauri::command(async)]
+pub fn test_connection(state: State<'_, AppState>, host_alias: String) -> Result<AuthResult> {
     let env = {
-        let current = state.agent_env.lock().unwrap().clone();
+        let current = recover_lock(&state.agent_env).clone();
         if crate::agent::is_ready(&current) {
             current
         } else {
             match crate::agent::ensure() {
                 Ok(started) => {
-                    *state.agent_env.lock().unwrap() = started.clone();
+                    *recover_lock(&state.agent_env) = started.clone();
                     started
                 }
-                Err(_) => current,
+                Err(e) => return Err(e),
             }
         }
     };
@@ -345,6 +423,9 @@ pub fn test_connection(state: State<AppState>, host_alias: String) -> Result<Aut
         &target,
     ]);
     crate::agent::apply_to_command(&mut cmd, &env);
+    if let Some(p) = crate::net::effective(&recover_lock(&state.config)) {
+        crate::net::apply_ssh_command(&mut cmd, &p)?;
+    }
     let output = cmd
         .output()
         .map_err(|e| AppError::Io(format!("执行 ssh 失败：{e}")))?;

@@ -1,10 +1,17 @@
 //! IPC 命令层：薄封装，仅做参数校验 + 编排 + 结果映射。
 //! **绝不在此写机密逻辑，绝不把私钥/口令/MK 传回前端。**
 
+pub mod accounts;
 pub mod agent;
 pub mod assets;
+pub mod biometric;
+pub mod proxy;
 pub mod repo;
+pub mod secrets_ui;
+pub mod security;
 pub mod sync;
+pub mod totp;
+pub mod update;
 pub mod vault;
 pub mod window;
 pub mod write;
@@ -12,8 +19,13 @@ pub mod write;
 use crate::app_config::AppConfig;
 use crate::vault::Vault;
 use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
+
+/// 配置/状态锁被先前 panic 污染后仍取出内部值，避免 IPC 在 WebView 回调里二次 unwrap 把进程杀掉。
+pub fn recover_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// 解锁限速：连续失败递增延迟，防手动试探。
 #[derive(Default)]
@@ -76,6 +88,10 @@ pub struct AppState {
     pub bootstrap_busy: AtomicBool,
     /// 给界面看的启动阶段说明。
     pub startup_note: Mutex<Option<String>>,
+    /// 更新下载/安装进行中，避免重叠。
+    pub update_busy: AtomicBool,
+    /// 查看 OTP/密码的内存级免密窗口到期时刻。
+    pub reveal_grace: Mutex<Option<Instant>>,
 }
 
 impl AppState {
@@ -92,9 +108,62 @@ impl AppState {
             writes_locked: AtomicBool::new(false),
             bootstrap_busy: AtomicBool::new(false),
             startup_note: Mutex::new(None),
+            update_busy: AtomicBool::new(false),
+            reveal_grace: Mutex::new(None),
         }
     }
 }
+
+pub fn clear_reveal_grace(state: &AppState) {
+    if let Ok(mut g) = state.reveal_grace.lock() {
+        *g = None;
+    }
+}
+
+/// 指纹重认证通过后刷新免密查看窗口（与验密成功收尾一致）。
+pub fn refresh_reveal_grace(state: &AppState) {
+    let minutes = recover_lock(&state.config).reveal_grace_minutes;
+    if minutes > 0 {
+        *recover_lock(&state.reveal_grace) =
+            Some(Instant::now() + std::time::Duration::from_secs(u64::from(minutes) * 60));
+    } else {
+        *recover_lock(&state.reveal_grace) = None;
+    }
+}
+
+/// 查看 OTP/密码：窗口内可免密；否则必须 verify_password。
+pub fn ensure_reveal_authorized(state: &AppState, password: Option<&str>) -> crate::error::Result<()> {
+    use crate::error::AppError;
+    let minutes = recover_lock(&state.config).reveal_grace_minutes;
+    let now = Instant::now();
+    {
+        let g = recover_lock(&state.reveal_grace);
+        if let Some(until) = *g {
+            if now < until {
+                return Ok(());
+            }
+        }
+    }
+    let Some(pw) = password.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Err(AppError::NeedReauth);
+    };
+    {
+        let vault = recover_lock(&state.vault);
+        let v = vault.as_ref().ok_or(AppError::Locked)?;
+        if !v.is_unlocked() {
+            return Err(AppError::Locked);
+        }
+        v.verify_password(pw)?;
+    }
+    if minutes > 0 {
+        *recover_lock(&state.reveal_grace) =
+            Some(now + std::time::Duration::from_secs(u64::from(minutes) * 60));
+    } else {
+        *recover_lock(&state.reveal_grace) = None;
+    }
+    Ok(())
+}
+
 
 pub fn ensure_writes_allowed(state: &AppState) -> crate::error::Result<()> {
     if state.writes_locked.load(std::sync::atomic::Ordering::SeqCst) {

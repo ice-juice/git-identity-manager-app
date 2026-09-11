@@ -6,14 +6,16 @@
 //! - MinIO / 自建 S3 服务
 //! - 阿里云 OSS / 腾讯云 COS（S3 兼容模式）
 
+use crate::app_config::{AppConfig, NetworkProxy};
 use crate::error::{AppError, Result};
+use crate::net;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 type HmacSha256 = Hmac<Sha256>;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3Config {
     /// 存储端点，如 "https://<account_id>.r2.cloudflarestorage.com" 或 "https://s3.us-east-1.amazonaws.com"
@@ -40,6 +42,7 @@ fn default_prefix() -> String {
     "gam-sync/".into()
 }
 
+#[derive(Clone)]
 pub struct S3Client {
     config: S3Config,
     client: reqwest::blocking::Client,
@@ -47,11 +50,27 @@ pub struct S3Client {
 
 impl S3Client {
     pub fn new(config: S3Config) -> Result<Self> {
-        let client = reqwest::blocking::Client::builder()
+        Self::new_with_proxy(config, None)
+    }
+
+    pub fn new_with_proxy(config: S3Config, proxy: Option<&NetworkProxy>) -> Result<Self> {
+        let mut builder = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(8))
             .timeout(std::time::Duration::from_secs(20))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(4);
+        if let Some(p) = proxy {
+            builder = net::apply_reqwest_blocking(builder, p)?;
+        }
+        let client = builder
             .build()
             .map_err(|e| AppError::Invalid(format!("创建 HTTP 客户端失败: {e}")))?;
         Ok(Self { config, client })
+    }
+
+    pub fn from_app(config: S3Config, app: &AppConfig) -> Result<Self> {
+        let proxy = net::for_cloud_sync(app);
+        Self::new_with_proxy(config, proxy.as_ref())
     }
 
     pub fn full_key(&self, subpath: &str) -> String {
@@ -95,6 +114,15 @@ impl S3Client {
     pub fn get_object(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let full_key = self.full_key(key);
         self.get_object_internal(&full_key)
+    }
+
+    /// 判断对象是否存在。优先 HEAD，不支持时回退 GET。
+    pub fn object_exists(&self, key: &str) -> bool {
+        let full_key = self.full_key(key);
+        match self.head_object_internal(&full_key) {
+            Ok(Some(exists)) => exists,
+            Ok(None) | Err(_) => self.get_object_internal(&full_key).ok().flatten().is_some(),
+        }
     }
 
     /// 删除对象
@@ -164,6 +192,34 @@ impl S3Client {
             .to_vec();
 
         Ok(Some(bytes))
+    }
+
+    /// HEAD 探测对象。`Ok(Some(true/false))` 表示确定结果；`Ok(None)` 表示服务端不支持 HEAD。
+    fn head_object_internal(&self, full_key: &str) -> Result<Option<bool>> {
+        let (url, host, canonical_uri) = self.build_target(full_key, "")?;
+        let (headers, _) = self.sign_request("HEAD", &host, &canonical_uri, "", &[])?;
+
+        let mut req = self.client.head(&url);
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+
+        let resp = req
+            .send()
+            .map_err(|e| AppError::Invalid(format!("连接云存储失败: {e}")))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(Some(false));
+        }
+        if status.is_success() {
+            return Ok(Some(true));
+        }
+        if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+            || status == reqwest::StatusCode::NOT_IMPLEMENTED
+        {
+            return Ok(None);
+        }
+        Ok(None)
     }
 
     fn delete_object_internal(&self, full_key: &str) -> Result<()> {
@@ -351,5 +407,78 @@ fn extract_s3_error(xml: &str) -> String {
         "未知云服务错误".into()
     } else {
         xml.chars().take(120).collect()
+    }
+}
+
+pub const S3_CONFIG_FILE_KIND: &str = crate::identity::S3_KIND;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3ConfigFile {
+    pub kind: String,
+    pub version: u32,
+    pub config: S3Config,
+}
+
+pub fn write_s3_config_file(path: &std::path::Path, config: &S3Config) -> Result<()> {
+    let payload = S3ConfigFile {
+        kind: S3_CONFIG_FILE_KIND.into(),
+        version: 1,
+        config: config.clone(),
+    };
+    let json = serde_json::to_vec_pretty(&payload)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::vault::atomic_write(path, &json)
+}
+
+pub fn read_s3_config_file(path: &std::path::Path) -> Result<S3Config> {
+    let raw = std::fs::read_to_string(path).map_err(|e| AppError::Io(format!("读取配置文件失败：{e}")))?;
+    parse_s3_config_file(&raw)
+}
+
+pub fn parse_s3_config_file(raw: &str) -> Result<S3Config> {
+    if let Ok(file) = serde_json::from_str::<S3ConfigFile>(raw) {
+        if !crate::identity::accepted_s3_kind(&file.kind) {
+            return Err(AppError::Invalid("这不是本程序导出的 S3/R2 配置文件".into()));
+        }
+        return Ok(file.config);
+    }
+    serde_json::from_str::<S3Config>(raw)
+        .map_err(|_| AppError::Invalid("无法解析 S3/R2 配置文件".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_wrapped_and_raw_s3_config() {
+        let cfg = S3Config {
+            endpoint: "https://example.r2.cloudflarestorage.com".into(),
+            bucket: "b".into(),
+            region: "auto".into(),
+            access_key_id: "ak".into(),
+            secret_access_key: "sk".into(),
+            prefix: "gam-sync/".into(),
+        };
+        let wrapped = serde_json::to_string(&S3ConfigFile {
+            kind: S3_CONFIG_FILE_KIND.into(),
+            version: 1,
+            config: cfg.clone(),
+        })
+        .unwrap();
+        let got = parse_s3_config_file(&wrapped).unwrap();
+        assert_eq!(got.bucket, "b");
+        let raw = serde_json::to_string(&cfg).unwrap();
+        assert_eq!(parse_s3_config_file(&raw).unwrap().access_key_id, "ak");
+        let legacy = serde_json::to_string(&S3ConfigFile {
+            kind: crate::identity::LEGACY_S3_KIND.into(),
+            version: 1,
+            config: cfg.clone(),
+        })
+        .unwrap();
+        assert_eq!(parse_s3_config_file(&legacy).unwrap().bucket, "b");
     }
 }

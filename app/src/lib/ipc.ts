@@ -21,6 +21,16 @@ export interface VaultStatus {
   writesLocked?: boolean;
   startupNote?: string | null;
 }
+
+export interface BiometricStatus {
+  available: boolean;
+  strong: boolean;
+  kind: string;
+  enabled: boolean;
+  revealEnabled: boolean;
+  revealSecret: boolean;
+  stale: boolean;
+}
 export interface InitResult {
   recoveryKey: string;
   workspaceId: string;
@@ -113,10 +123,53 @@ export interface AgentKeyResolved {
   identityName: string | null;
   keyName: string | null;
 }
+export interface EnvCheck {
+  key: string;
+  label: string;
+  ok: boolean;
+  current: string | null;
+  expected: string | null;
+  hint?: string | null;
+}
+export interface AgentUnifyStatus {
+  os: string;
+  gitInstalled: boolean;
+  agentRunning: boolean;
+  gitSsh: string | null;
+  sshAdd: string | null;
+  authSock: string | null;
+  agentPid: string | null;
+  gitConfigOk: boolean;
+  userGitSshOk: boolean;
+  userSockOk: boolean;
+  powershellProfileOk: boolean;
+  bashProfileOk: boolean;
+  aligned: boolean;
+  gitConfigValue: string | null;
+  userGitSsh: string | null;
+  userAuthSock: string | null;
+  checks: EnvCheck[];
+}
+export interface AgentUnifyReport {
+  gitSsh: string;
+  sshAdd: string;
+  authSock: string;
+  agentPid: string | null;
+  gitConfig: boolean;
+  userEnv: boolean;
+  powershellProfile: boolean;
+  bashProfile: boolean;
+  steps: string[];
+  hint: string;
+}
 export interface AgentStatus {
   running: boolean;
   usingFallback: boolean;
+  ssh: string | null;
+  sshAdd: string | null;
+  authSock: string | null;
   keys: AgentKeyResolved[];
+  unify: AgentUnifyStatus;
 }
 export interface Candidate {
   identityId: string;
@@ -256,7 +309,8 @@ export interface CloudSyncStatus {
   localIdentityCount: number;
   localKeyCount: number;
   localRepoCount: number;
-  status: "synced" | "local_ahead" | "remote_ahead" | "not_synced" | "different_workspace" | "unconfigured";
+  status: "synced" | "local_ahead" | "remote_ahead" | "not_synced" | "different_workspace" | "unconfigured" | "checking";
+  headerReady?: boolean;
 }
 
 export interface SyncResult {
@@ -286,6 +340,69 @@ export interface CloudSnapshot {
   isDailyFirst?: boolean;
 }
 
+export interface CloudSyncPageData {
+  config: S3Config | null;
+  autoSync: AutoSyncSettings;
+  status: CloudSyncStatus;
+  snapshots: CloudSnapshot[];
+  remoteFresh: boolean;
+}
+
+export interface CloudRestorePreview {
+  workspaceId: string;
+  updatedAt?: string | null;
+  identityCount: number;
+  keyCount: number;
+  repoCount: number;
+  hasManifest: boolean;
+}
+
+export interface UpdateSource {
+  kind: "github" | "manifest";
+  repo?: string;
+  manifestUrl?: string;
+  includePrerelease: boolean;
+}
+
+export interface UpdateCheckResult {
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  notes: string | null;
+  pubDate: string | null;
+  source: UpdateSource;
+  downloadUrl: string | null;
+  platform: string;
+  selfUpdateSupported: boolean;
+}
+
+export interface UpdateProgress {
+  phase: "started" | "downloading" | "finished";
+  downloaded: number;
+  total: number | null;
+}
+
+export interface NetworkProxy {
+  enabled: boolean;
+  scheme: "http" | "https" | "socks5" | string;
+  host: string;
+  port: number;
+  username?: string | null;
+  password?: string | null;
+  applyToGitHttps: boolean;
+  applyToSsh: boolean;
+  applyToCloudSync: boolean;
+}
+
+export interface ProxyTestResult {
+  httpsOk: boolean;
+  httpsMs: number | null;
+  httpsError: string | null;
+  sshHelperFound: boolean;
+  sshHelperName: string | null;
+  sshNote: string | null;
+}
+
 // ---- 命令 ----
 export const api = {
   // vault
@@ -294,6 +411,13 @@ export const api = {
   vaultInit: (path: string, password: string) => invoke<InitResult>("vault_init", { path, password }),
   vaultUnlock: (password: string) => invoke<void>("vault_unlock", { password }),
   vaultUnlockRecovery: (recoveryKey: string) => invoke<void>("vault_unlock_recovery", { recoveryKey }),
+  vaultUnlockBiometric: () => invoke<void>("vault_unlock_biometric"),
+  biometricStatus: () => invoke<BiometricStatus>("biometric_status"),
+  biometricEnable: (password: string) => invoke<void>("biometric_enable", { password }),
+  biometricDisable: () => invoke<void>("biometric_disable"),
+  revealAuthorizeBiometric: () => invoke<void>("reveal_authorize_biometric"),
+  setBiometricRevealEnabled: (enabled: boolean) => invoke<void>("set_biometric_reveal_enabled", { enabled }),
+  setBiometricRevealSecret: (enabled: boolean) => invoke<void>("set_biometric_reveal_secret", { enabled }),
   vaultLock: () => invoke<void>("vault_lock"),
   changePassword: (oldPassword: string, newPassword: string) =>
     invoke<void>("change_password", { oldPassword, newPassword }),
@@ -301,13 +425,18 @@ export const api = {
   vaultTryGraceUnlock: () => invoke<boolean>("vault_try_grace_unlock"),
   setLaunchAtLogin: (enabled: boolean) => invoke<void>("set_launch_at_login", { enabled }),
   setGraceDays: (days: number) => invoke<void>("set_grace_days", { days }),
+  factoryReset: (confirmed: boolean, confirmPhrase: string) =>
+    invoke<{ steps: string[] }>("factory_reset", { confirmed, confirmPhrase }),
   applyCloseChoice: (action: "tray" | "quit" | "cancel", remember: boolean) =>
     invoke<void>("apply_close_choice", { action, remember }),
   getClosePreference: () => invoke<"tray" | "quit" | null>("get_close_preference"),
   clearClosePreference: () => invoke<void>("clear_close_preference"),
 
   // assets (M2)
-  readSshConfig: () => invoke<ConfigView>("read_ssh_config"),
+  readSshConfig: (repair?: boolean) =>
+    invoke<ConfigView>("read_ssh_config", repair ? { repair: true } : {}),
+  workspaceNavCounts: () =>
+    invoke<{ identities: number; keys: number; repos: number }>("workspace_nav_counts"),
   openSshConfig: () => invoke<string>("open_ssh_config"),
   scanKeys: () => invoke<ScannedKey[]>("scan_keys"),
   detectToolchain: () => invoke<Toolchain>("detect_toolchain"),
@@ -350,6 +479,7 @@ export const api = {
   // agent (M4)
   agentStatus: () => invoke<AgentStatus>("agent_status"),
   agentEnsure: () => invoke<AgentStatus>("agent_ensure"),
+  agentUnifyEnv: (confirmed: boolean) => invoke<AgentUnifyReport>("agent_unify_env", { confirmed }),
   agentLoad: (keyId: string) => invoke<void>("agent_load", { keyId }),
   agentLoadIdentity: (identityId: string) => invoke<void>("agent_load_identity", { identityId }),
   agentLoadAll: () => invoke<number>("agent_load_all"),
@@ -391,20 +521,249 @@ export const api = {
   getCloudSyncConfig: () => invoke<S3Config | null>("get_cloud_sync_config"),
   saveCloudSyncConfig: (syncConfig: S3Config | null) =>
     invoke<void>("save_cloud_sync_config", { syncConfig }),
+  exportS3Config: (destPath: string, syncConfig: S3Config) =>
+    invoke<void>("export_s3_config", { destPath, syncConfig }),
+  importS3Config: (srcPath: string) => invoke<S3Config>("import_s3_config", { srcPath }),
   testCloudSyncConfig: (syncConfig: S3Config) =>
     invoke<number>("test_cloud_sync_config", { syncConfig }),
-  getCloudSyncStatus: () => invoke<CloudSyncStatus>("get_cloud_sync_status"),
+  getCloudSyncPage: () => invoke<CloudSyncPageData>("get_cloud_sync_page"),
+  getCloudSyncStatus: (lite?: boolean) =>
+    invoke<CloudSyncStatus>("get_cloud_sync_status", lite === undefined ? {} : { lite }),
   cloudSyncPush: () => invoke<SyncResult>("cloud_sync_push"),
   cloudSyncPull: () => invoke<SyncResult>("cloud_sync_pull"),
   getAutoSyncSettings: () => invoke<AutoSyncSettings>("get_auto_sync_settings"),
   setAutoSyncMinutes: (minutes: number) => invoke<number>("set_auto_sync_minutes", { minutes }),
-  listCloudSnapshots: () => invoke<CloudSnapshot[]>("list_cloud_snapshots"),
+  listCloudSnapshots: (force?: boolean) =>
+    invoke<CloudSnapshot[]>("list_cloud_snapshots", force === undefined ? {} : { force }),
   restoreCloudSnapshot: (snapshotId: string) =>
     invoke<SyncResult>("restore_cloud_snapshot", { snapshotId }),
   runAutoSyncNow: () => invoke<SyncResult | null>("run_auto_sync_now"),
+  previewCloudRestore: (syncConfig: S3Config, recoveryKey: string) =>
+    invoke<CloudRestorePreview>("preview_cloud_restore", { syncConfig, recoveryKey }),
+    restoreFromCloud: (args: {
+      path: string;
+      password: string;
+      recoveryKey: string;
+      syncConfig: S3Config;
+      includeRepos?: boolean;
+    }) => invoke<SyncResult>("restore_from_cloud", args),
+
+  // update (M7)
+  getUpdateSource: () => invoke<UpdateSource>("get_update_source"),
+  saveUpdateSource: (source: UpdateSource | null) => invoke<void>("save_update_source", { source }),
+  getAutoCheckUpdate: () => invoke<boolean>("get_auto_check_update"),
+  setAutoCheckUpdate: (enabled: boolean) => invoke<void>("set_auto_check_update", { enabled }),
+  checkUpdate: () => invoke<UpdateCheckResult>("check_update"),
+  downloadAndInstallUpdate: () => invoke<void>("download_and_install_update"),
+  skipUpdateVersion: (version: string) => invoke<void>("skip_update_version", { version }),
+  getLastUpdateCheck: () => invoke<string | null>("get_last_update_check"),
+
+  getNetworkProxy: () => invoke<NetworkProxy | null>("get_network_proxy"),
+  saveNetworkProxy: (proxy: NetworkProxy | null) => invoke<void>("save_network_proxy", { proxy }),
+  testNetworkProxy: (proxy: NetworkProxy) => invoke<ProxyTestResult>("test_network_proxy", { proxy }),
+
+  totpList: () => invoke<{ entries: TotpEntry[]; groups: GroupMeta[] }>("totp_list"),
+  totpAdd: (args: TotpUpsertArgs) => invoke<TotpEntry>("totp_add", { args }),
+  totpUpdate: (args: TotpUpsertArgs) => invoke<TotpEntry>("totp_update", { args }),
+  totpDelete: (id: string) => invoke<void>("totp_delete", { id }),
+  totpSaveGroups: (groups: GroupMeta[]) => invoke<void>("totp_save_groups", { groups }),
+  totpGenerateCode: (id: string, password?: string) =>
+    invoke<TotpCode>("totp_generate_code", { id, password: password ?? null }),
+  totpParseUri: (uri: string) => invoke<ParsedTotpPreview>("totp_parse_uri", { uri }),
+  totpImportFromImage: (path: string) => invoke<ParsedTotpPreview>("totp_import_from_image", { path }),
+  totpScanScreen: () => invoke<ScreenHit[]>("totp_scan_screen"),
+  totpRevealSecret: (id: string, password: string) =>
+    invoke<TotpSecretReveal>("totp_reveal_secret", { id, password }),
+  totpExportQr: (id: string, password: string) => invoke<string>("totp_export_qr", { id, password }),
+
+  accountList: () => invoke<{ entries: AccountEntry[]; groups: GroupMeta[] }>("account_list"),
+  accountAdd: (args: AccountUpsertArgs) => invoke<AccountEntry>("account_add", { args }),
+  accountUpdate: (args: AccountUpsertArgs) => invoke<AccountEntry>("account_update", { args }),
+  accountDelete: (id: string) => invoke<void>("account_delete", { id }),
+  accountSaveGroups: (groups: GroupMeta[]) => invoke<void>("account_save_groups", { groups }),
+  accountRevealPassword: (id: string, password?: string) =>
+    invoke<string>("account_reveal_password", { id, password: password ?? null }),
+  accountTouch: (id: string) => invoke<void>("account_touch", { id }),
+  accountHistoryList: (id: string) => invoke<HistoryMeta[]>("account_history_list", { id }),
+  accountRevealHistory: (id: string, index: number, password?: string) =>
+    invoke<string>("account_reveal_history", { id, index, password: password ?? null }),
+  accountRollbackHistory: (id: string, index: number) =>
+    invoke<void>("account_rollback_history", { id, index }),
+  accountClearHistory: (id: string) => invoke<void>("account_clear_history", { id }),
+
+  clipboardWrite: (text: string, secret = false) =>
+    invoke<ClipboardWriteResult>("clipboard_write", { text, secret }),
+  clipboardClear: () => invoke<void>("clipboard_clear"),
+  getRevealSettings: () => invoke<RevealSettings>("get_reveal_settings"),
+  setRevealGraceMinutes: (minutes: number) => invoke<number>("set_reveal_grace_minutes", { minutes }),
+  setClipboardClearSeconds: (seconds: number) =>
+    invoke<number>("set_clipboard_clear_seconds", { seconds }),
+  setAccountHistoryLimit: (limit: number) => invoke<number>("set_account_history_limit", { limit }),
+  iconListBuiltin: () => invoke<BuiltinIconInfo[]>("icon_list_builtin"),
+  iconUploadCustom: (filePath: string) => invoke<CustomIconInfo>("icon_upload_custom", { filePath }),
+  iconGetCustom: (iconRef: string) => invoke<string>("icon_get_custom", { iconRef }),
+
+  securityChecklist: () => invoke<SecurityChecklist>("security_checklist"),
 };
 
 export function errMessage(e: unknown): string {
   if (e && typeof e === "object" && "message" in e) return String((e as AppErrorShape).message);
   return String(e);
+}
+
+export function errCode(e: unknown): string {
+  if (e && typeof e === "object" && "code" in e) return String((e as AppErrorShape).code);
+  return "";
+}
+
+export interface GroupMeta {
+  name: string;
+  color?: string | null;
+  sortOrder: number;
+}
+
+export interface TotpEntry {
+  id: string;
+  issuer: string;
+  account: string;
+  note?: string | null;
+  url?: string | null;
+  group?: string | null;
+  algorithm: string;
+  digits: number;
+  period: number;
+  icon?: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  hasSeed?: boolean;
+}
+
+export interface AccountEntry {
+  id: string;
+  platform: string;
+  username: string;
+  displayName?: string | null;
+  url?: string | null;
+  note?: string | null;
+  group?: string | null;
+  tags: string[];
+  icon?: string | null;
+  pinned: boolean;
+  sortOrder: number;
+  totpRef?: string | null;
+  lastUsedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  hasPassword?: boolean;
+}
+
+export interface TotpCode {
+  code: string;
+  period: number;
+  remainingSeconds: number;
+}
+
+export interface TotpSecretReveal {
+  secretBase32: string;
+  otpauthUri: string;
+  qrPngBase64: string;
+}
+
+export interface ParsedTotpPreview {
+  issuer: string;
+  account: string;
+  algorithm: string;
+  digits: number;
+  period: number;
+  suggestedIcon?: string | null;
+  secret?: string;
+}
+
+export interface ScreenHit {
+  display: string;
+  uri: string;
+  parsed: { issuer: string; account: string; algorithm: string; digits: number; period: number };
+}
+
+export interface HistoryMeta {
+  index: number;
+  replacedAt: string;
+}
+
+export interface BuiltinIconInfo {
+  id: string;
+  name: string;
+  color: string;
+  glyph: string;
+}
+
+export interface CustomIconInfo {
+  iconRef: string;
+  dataUrl: string;
+  bytes: number;
+}
+
+export interface RevealSettings {
+  revealGraceMinutes: number;
+  clipboardClearSeconds: number;
+  accountHistoryLimit: number;
+}
+
+export type SecuritySeverity = "ok" | "info" | "warn";
+export type SecurityLevel = "safe" | "caution" | "risk";
+export type SecurityCategory = "storage" | "app";
+
+export interface SecurityFinding {
+  id: string;
+  category: SecurityCategory;
+  severity: SecuritySeverity;
+  title: string;
+  detail: string;
+  advice: string;
+  settingsAnchor?: string | null;
+  limitation?: string | null;
+}
+
+export interface SecurityChecklist {
+  checkedAt: string;
+  level: SecurityLevel;
+  items: SecurityFinding[];
+}
+
+export interface ClipboardWriteResult {
+  excluded: boolean;
+  fallback: boolean;
+  notice?: string | null;
+}
+
+export interface TotpUpsertArgs {
+  id?: string;
+  issuer: string;
+  account: string;
+  secret?: string;
+  note?: string;
+  url?: string;
+  group?: string;
+  algorithm?: string;
+  digits?: number;
+  period?: number;
+  icon?: string;
+  sortOrder?: number;
+}
+
+export interface AccountUpsertArgs {
+  id?: string;
+  platform: string;
+  username: string;
+  password?: string;
+  displayName?: string;
+  url?: string;
+  note?: string;
+  group?: string;
+  tags?: string[];
+  icon?: string;
+  pinned?: boolean;
+  sortOrder?: number;
+  totpRef?: string;
 }

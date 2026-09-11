@@ -1,7 +1,7 @@
 //! M5 命令层：地址解析/身份推断、仓库扫描/体检/切换、归属标识管理、PAT 上传公钥。
 
 use crate::agent::AgentEnv;
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::git::infer::{infer, Inference};
 use crate::git::url::parse_repo_url;
@@ -16,7 +16,7 @@ use std::process::Command;
 use tauri::{AppHandle, State};
 
 fn with_vault<T>(state: &State<AppState>, f: impl FnOnce(&Vault) -> Result<T>) -> Result<T> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -103,6 +103,10 @@ fn to_view(data: &crate::model::VaultData, rec: &ManagedRepo) -> ManagedRepoView
     }
 }
 
+fn current_machine_id() -> String {
+    crate::app_config::AppConfig::current_machine_id()
+}
+
 fn upsert_from_info(
     data: &mut crate::model::VaultData,
     info: &repo::RepoInfo,
@@ -124,6 +128,7 @@ fn upsert_from_info(
             identity_id: inferred_id,
             added_at: iso_now(),
             source: source.into(),
+            machine_id: current_machine_id(),
         },
     )
 }
@@ -185,6 +190,9 @@ pub fn scan_and_import_repos(
                 updated += 1;
             }
         }
+        let machine_id = current_machine_id();
+        crate::model::claim_unowned_repos(&mut data, &machine_id);
+        crate::model::keep_repos_for_machine(&mut data, &machine_id);
         store::save_data(v, &data)?;
         crate::util::audit(
             v.root(),
@@ -204,54 +212,63 @@ pub fn scan_and_import_repos(
 }
 
 /// 列出已登记仓库，并回读磁盘上的 origin。
-#[tauri::command]
-pub async fn list_managed_repos(state: State<'_, AppState>) -> Result<Vec<ManagedRepoView>> {
-    with_vault(&state, |v| {
-        let mut data = store::load_data(v)?;
-        let identities = data.identities.clone();
-        let history = data.clone_history.clone();
-        let mut dirty = false;
-        let mut views = Vec::with_capacity(data.repos.len());
-        for rec in data.repos.iter_mut() {
-            let exists = PathBuf::from(&rec.path).is_dir();
-            let mut current_alias = None;
-            let mut needs_alias_fix = false;
-            let mut remote_url = rec.remote_url.clone();
-            // 目录不存在时绝不调用 git，避免无效路径把 UI 卡住。
-            if exists {
-                let live = repo::inspect(std::path::Path::new(&rec.path), &identities, &history);
-                if live.remote_url.is_some() && live.remote_url != rec.remote_url {
-                    rec.remote_url = live.remote_url.clone();
-                    dirty = true;
-                }
-                if live.remote_url.is_some() {
-                    remote_url = live.remote_url;
-                }
-                current_alias = live.current_alias;
-                needs_alias_fix = live.needs_alias_fix;
+#[tauri::command(async)]
+pub fn list_managed_repos(state: State<'_, AppState>) -> Result<Vec<ManagedRepoView>> {
+    let (mut data, vault) = {
+        let guard = recover_lock(&state.vault);
+        let v = guard.as_ref().ok_or(AppError::Locked)?;
+        if !v.is_unlocked() {
+            return Err(AppError::Locked);
+        }
+        (store::load_data(v)?, v.clone())
+    };
+    let machine_id = current_machine_id();
+    let mut dirty = crate::model::claim_unowned_repos(&mut data, &machine_id);
+    if crate::model::keep_repos_for_machine(&mut data, &machine_id) {
+        dirty = true;
+    }
+    let identities = data.identities.clone();
+    let history = data.clone_history.clone();
+    let mut views = Vec::with_capacity(data.repos.len());
+    for rec in data.repos.iter_mut() {
+        let exists = PathBuf::from(&rec.path).is_dir();
+        let mut current_alias = None;
+        let mut needs_alias_fix = false;
+        let mut remote_url = rec.remote_url.clone();
+        // 目录不存在时绝不调用 git，避免无效路径把 UI 卡住。
+        if exists {
+            let live = repo::inspect(std::path::Path::new(&rec.path), &identities, &history);
+            if live.remote_url.is_some() && live.remote_url != rec.remote_url {
+                rec.remote_url = live.remote_url.clone();
+                dirty = true;
             }
-            views.push(ManagedRepoView {
-                id: rec.id.clone(),
-                path: rec.path.clone(),
-                name: rec.name.clone(),
-                remote_url,
-                identity_id: rec.identity_id.clone(),
-                identity_name: identities
-                    .iter()
-                    .find(|i| rec.identity_id.as_deref() == Some(i.id.as_str()))
-                    .map(|i| i.name.clone()),
-                added_at: rec.added_at.clone(),
-                source: rec.source.clone(),
-                exists,
-                current_alias,
-                needs_alias_fix,
-            });
+            if live.remote_url.is_some() {
+                remote_url = live.remote_url;
+            }
+            current_alias = live.current_alias;
+            needs_alias_fix = live.needs_alias_fix;
         }
-        if dirty {
-            store::save_data(v, &data)?;
-        }
-        Ok(views)
-    })
+        views.push(ManagedRepoView {
+            id: rec.id.clone(),
+            path: rec.path.clone(),
+            name: rec.name.clone(),
+            remote_url,
+            identity_id: rec.identity_id.clone(),
+            identity_name: identities
+                .iter()
+                .find(|i| rec.identity_id.as_deref() == Some(i.id.as_str()))
+                .map(|i| i.name.clone()),
+            added_at: rec.added_at.clone(),
+            source: rec.source.clone(),
+            exists,
+            current_alias,
+            needs_alias_fix,
+        });
+    }
+    if dirty {
+        store::save_data(&vault, &data)?;
+    }
+    Ok(views)
 }
 
 /// 从管理列表移除（不删除磁盘目录）。
@@ -260,11 +277,13 @@ pub async fn remove_managed_repo(app: AppHandle, state: State<'_, AppState>, rep
     crate::commands::ensure_writes_allowed(&state)?;
     with_vault(&state, |v| {
         let mut data = store::load_data(v)?;
-        let before = data.repos.len();
-        data.repos.retain(|r| r.id != repo_id);
-        if data.repos.len() == before {
+        let machine_id = current_machine_id();
+        crate::model::claim_unowned_repos(&mut data, &machine_id);
+        crate::model::keep_repos_for_machine(&mut data, &machine_id);
+        if !data.repos.iter().any(|r| r.id == repo_id) {
             return Err(AppError::Invalid("仓库不在管理列表中".into()));
         }
+        data.repos.retain(|r| r.id != repo_id);
         data.deleted_repos.insert(repo_id.clone(), iso_now());
         store::save_data(v, &data)?;
         crate::util::audit(v.root(), &format!("移除已登记仓库 {repo_id}"));
@@ -442,6 +461,7 @@ pub fn switch_repo_identity(app: AppHandle, state: State<AppState>, repo_path: S
                 identity_id: Some(ident_id),
                 added_at: iso_now(),
                 source: "manual".into(),
+                machine_id: current_machine_id(),
             },
         );
         store::save_data(v, &data)?;
@@ -480,7 +500,11 @@ pub struct CloneOrInitArgs {
     pub mode: String,
 }
 
-fn run_git(env: &AgentEnv, args: &[&str]) -> Result<(String, String, i32)> {
+fn run_git(
+    env: &AgentEnv,
+    args: &[&str],
+    proxy: Option<&crate::app_config::NetworkProxy>,
+) -> Result<(String, String, i32)> {
     let mut cmd = Command::new("git");
     cmd.args(args);
     crate::agent::apply_to_command(&mut cmd, env);
@@ -494,6 +518,9 @@ fn run_git(env: &AgentEnv, args: &[&str]) -> Result<(String, String, i32)> {
             format!("\"{ssh}\" -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
         };
         cmd.env("GIT_SSH_COMMAND", ssh_cmd);
+    }
+    if let Some(p) = proxy {
+        crate::net::apply_git_command(&mut cmd, p)?;
     }
     let output = cmd
         .output()
@@ -534,18 +561,23 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
     }
 
     let env = {
-        let current = state.agent_env.lock().unwrap().clone();
+        let current = recover_lock(&state.agent_env).clone();
         if crate::agent::is_ready(&current) {
             current
         } else {
             match crate::agent::ensure() {
                 Ok(started) => {
-                    *state.agent_env.lock().unwrap() = started.clone();
+                    *recover_lock(&state.agent_env) = started.clone();
                     started
                 }
                 Err(_) => current,
             }
         }
+    };
+
+    let proxy = {
+        let cfg = recover_lock(&state.config);
+        crate::net::effective(&cfg)
     };
 
     let r = with_vault(&state, |v| {
@@ -568,7 +600,7 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
                 if let Some(parent) = PathBuf::from(&target_str).parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                let (_o, e, code) = run_git(&env, &["clone", &used_url, &target_str])?;
+                let (_o, e, code) = run_git(&env, &["clone", &used_url, &target_str], proxy.as_ref())?;
                 if code != 0 {
                     return Err(AppError::Other(format!("git clone 失败：{}", e.trim())));
                 }
@@ -620,6 +652,7 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
                 identity_id: Some(identity.id.clone()),
                 added_at: iso_now(),
                 source: mode.to_string(),
+                machine_id: current_machine_id(),
             },
         );
         store::save_data(v, &data)?;
@@ -646,8 +679,8 @@ pub struct GithubPatStatus {
 }
 
 /// 查询是否已保存 GitHub PAT（不回传令牌本身）。
-#[tauri::command]
-pub fn github_pat_status(state: State<AppState>) -> Result<GithubPatStatus> {
+#[tauri::command(async)]
+pub fn github_pat_status(state: State<'_, AppState>) -> Result<GithubPatStatus> {
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         Ok(GithubPatStatus {
@@ -695,26 +728,28 @@ pub fn clear_github_pat(app: AppHandle, state: State<AppState>) -> Result<()> {
 }
 
 /// 校验 PAT 并返回账号名。
-#[tauri::command]
-pub fn test_github_pat(state: State<AppState>) -> Result<String> {
+#[tauri::command(async)]
+pub fn test_github_pat(state: State<'_, AppState>) -> Result<String> {
+    let proxy = crate::net::effective(&recover_lock(&state.config));
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
             .github_pat
             .ok_or_else(|| AppError::Invalid("尚未配置 PAT".into()))?;
-        github::whoami(&token)
+        github::whoami(&token, proxy.as_ref())
     })
 }
 
 /// 拉取 PAT 账号所属组织（供批量导入归属标识）。
-#[tauri::command]
-pub fn list_github_orgs(state: State<AppState>) -> Result<Vec<String>> {
+#[tauri::command(async)]
+pub fn list_github_orgs(state: State<'_, AppState>) -> Result<Vec<String>> {
+    let proxy = crate::net::effective(&recover_lock(&state.config));
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
             .github_pat
             .ok_or_else(|| AppError::Invalid("尚未配置 PAT".into()))?;
-        github::list_orgs(&token)
+        github::list_orgs(&token, proxy.as_ref())
     })
 }
 
@@ -722,6 +757,7 @@ pub fn list_github_orgs(state: State<AppState>) -> Result<Vec<String>> {
 #[tauri::command]
 pub fn upload_public_key(state: State<AppState>, key_id: String, title: String) -> Result<()> {
     crate::commands::ensure_writes_allowed(&state)?;
+    let proxy = crate::net::effective(&recover_lock(&state.config));
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
@@ -733,7 +769,7 @@ pub fn upload_public_key(state: State<AppState>, key_id: String, title: String) 
             .iter()
             .find(|k| k.id == key_id)
             .ok_or_else(|| AppError::Invalid("密钥不存在".into()))?;
-        github::upload_public_key(&token, &title, &record.public_openssh)?;
+        github::upload_public_key(&token, &title, &record.public_openssh, proxy.as_ref())?;
         crate::util::audit(v.root(), &format!("PAT 上传公钥 {}", record.name));
         Ok(())
     })

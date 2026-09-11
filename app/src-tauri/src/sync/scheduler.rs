@@ -125,9 +125,9 @@ fn run_locked(state: &AppState, trigger: &str) -> Result<Option<SyncResult>> {
         }
     }
 
-    let sync_config = {
+    let (sync_config, app_cfg) = {
         let cfg = state.config.lock().map_err(|_| AppError::Other("配置锁损坏".into()))?;
-        cfg.cloud_sync.clone()
+        (cfg.cloud_sync.clone(), cfg.clone())
     };
     let Some(sync_config) = sync_config else {
         return Ok(None);
@@ -144,12 +144,13 @@ fn run_locked(state: &AppState, trigger: &str) -> Result<Option<SyncResult>> {
         v.clone()
     };
 
-    let client = S3Client::new(sync_config)?;
+    let client = S3Client::from_app(sync_config, &app_cfg)?;
     let result = if trigger == "edit" {
         engine::publish_after_edit(&vault, &client)?
     } else {
         engine::pull_then_maybe_push(&vault, &client)?
     };
+    crate::commands::sync::remember_view_after_sync(&vault, &client);
     if let Ok(mut last) = state.last_periodic_sync.lock() {
         *last = Some(Instant::now());
     }

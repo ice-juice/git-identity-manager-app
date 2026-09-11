@@ -13,6 +13,12 @@ pub enum AppError {
     BadRecoveryKey(String),
     #[error("工作空间未解锁")]
     Locked,
+    #[error("查看机密需要重新输入访问密码")]
+    NeedReauth,
+    #[error("已取消生物识别")]
+    BiometricCancelled,
+    #[error("指纹凭据已失效，请用访问密码解锁后重新开启")]
+    BiometricStale,
     #[error("加密/解密失败")]
     Crypto,
     #[error("解锁尝试过于频繁，请稍候再试")]
@@ -38,6 +44,9 @@ impl AppError {
             AppError::BadPassword => "BAD_PASSWORD",
             AppError::BadRecoveryKey(_) => "BAD_RECOVERY_KEY",
             AppError::Locked => "LOCKED",
+            AppError::NeedReauth => "NEED_REAUTH",
+            AppError::BiometricCancelled => "BIOMETRIC_CANCELLED",
+            AppError::BiometricStale => "BIOMETRIC_STALE",
             AppError::Crypto => "CRYPTO",
             AppError::RateLimited => "RATE_LIMITED",
             AppError::Io(_) => "IO",

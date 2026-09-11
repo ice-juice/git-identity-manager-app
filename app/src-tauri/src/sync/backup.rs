@@ -5,7 +5,7 @@
 //! 适合换机离线迁移、冷备份以及故障恢复。
 
 use crate::error::{AppError, Result};
-use crate::model::{KeyRecord, Secrets, VaultData};
+use crate::model::{AccountData, KeyRecord, Secrets, TotpData, VaultData};
 use crate::platform::PlatformOps;
 use crate::store;
 use crate::vault::crypto::{self, SALT_LEN, XNONCE_LEN};
@@ -30,6 +30,13 @@ pub struct BackupPayload {
     pub secrets: Secrets,
     /// keyId -> base64(privateKeyBytes)
     pub private_keys: HashMap<String, String>,
+    #[serde(default)]
+    pub totp_data: TotpData,
+    #[serde(default)]
+    pub account_data: AccountData,
+    /// iconHash -> base64(webp)
+    #[serde(default)]
+    pub icons: HashMap<String, String>,
 }
 
 /// 前端展示的备份摘要
@@ -59,7 +66,8 @@ pub fn export_backup(vault: &Vault, dest_path: &Path, password: &str) -> Result<
         return Err(AppError::Invalid("备份加密密码不能为空".into()));
     }
 
-    let data = store::load_data(vault)?;
+    let mut data = store::load_data(vault)?;
+    crate::sys::portableize_vault_data(&mut data);
     let secrets = store::load_secrets(vault)?;
 
     // 收集所有私钥明文（内存中临时持有，base64 编码打入 payload）
@@ -86,6 +94,15 @@ pub fn export_backup(vault: &Vault, dest_path: &Path, password: &str) -> Result<
         has_github_pat: secrets.github_pat.is_some(),
     };
 
+    let totp_data = store::load_totp(vault).unwrap_or_default();
+    let account_data = store::load_accounts(vault).unwrap_or_default();
+    let mut icons = HashMap::new();
+    for hash in store::list_icon_hashes(vault) {
+        if let Ok(raw) = store::load_icon(vault, &hash) {
+            icons.insert(hash, B64.encode(raw));
+        }
+    }
+
     let payload = BackupPayload {
         version: 1,
         workspace_id: vault.workspace_id().to_string(),
@@ -93,6 +110,9 @@ pub fn export_backup(vault: &Vault, dest_path: &Path, password: &str) -> Result<
         data,
         secrets,
         private_keys,
+        totp_data,
+        account_data,
+        icons,
     };
 
     let payload_bytes = serde_json::to_vec(&payload)?;
@@ -196,11 +216,41 @@ pub fn import_backup(
             store::save_key(vault, key_id, &key_bytes)?;
         }
     }
-    for (key_id, pass) in payload.secrets.key_passphrases {
-        current_secrets.key_passphrases.insert(key_id, pass);
+    for (key_id, pass) in &payload.secrets.key_passphrases {
+        current_secrets.key_passphrases.insert(key_id.clone(), pass.clone());
     }
     if payload.secrets.github_pat.is_some() && (!merge || current_secrets.github_pat.is_none()) {
-        current_secrets.github_pat = payload.secrets.github_pat;
+        current_secrets.github_pat = payload.secrets.github_pat.clone();
+    }
+    let current_totp = if merge {
+        store::load_totp(vault).unwrap_or_default()
+    } else {
+        TotpData::default()
+    };
+    let current_acc = if merge {
+        store::load_accounts(vault).unwrap_or_default()
+    } else {
+        AccountData::default()
+    };
+    current_secrets = crate::model::merge_secrets_with_meta(
+        current_secrets,
+        &payload.secrets,
+        Some(&current_totp),
+        Some(&payload.totp_data),
+        Some(&current_acc),
+        Some(&payload.account_data),
+    );
+    store::save_secrets(vault, &current_secrets)?;
+    store::save_totp(vault, &crate::model::merge_totp_data(current_totp, payload.totp_data.clone()))?;
+    store::save_accounts(
+        vault,
+        &crate::model::merge_account_data(current_acc, payload.account_data.clone()),
+    )?;
+
+    for (hash, b64) in &payload.icons {
+        if let Ok(bytes) = B64.decode(b64) {
+            let _ = store::save_icon(vault, hash, &bytes);
+        }
     }
 
     // 2. 恢复 keys
@@ -235,9 +285,12 @@ pub fn import_backup(
         current_data.clone_history.insert(k, v);
     }
 
-    // 保存
+    crate::sys::portableize_vault_data(&mut current_data);
+    let machine_id = crate::app_config::AppConfig::current_machine_id();
+    for repo in &mut current_data.repos {
+        repo.machine_id = machine_id.clone();
+    }
     store::save_data(vault, &current_data)?;
-    store::save_secrets(vault, &current_secrets)?;
 
     // 自动部署私钥到工作空间 ssh-keys/ 目录下，保证 OpenSSH 能立刻识别使用
     for key in &current_data.keys {

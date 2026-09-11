@@ -1,13 +1,85 @@
-name: Build installers
+# 打包与发布只认 release 分支上的提交：
+# - 只推 release 分支：不打包（避免和打标签各跑一轮）
+# - 推送 v* 标签：先跑 2 路 Unix cargo test（preflight），通过后再 6 路出包
+# - 手动 Run workflow：可选出包；勾选 create_release 时建草稿 Release
+name: Release packages
 
 on:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a draft GitHub Release and latest.json
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  preflight:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/heads/release ]]; then
+            echo "Building from release branch"
+            exit 0
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            git fetch origin release --depth=100
+            if git merge-base --is-ancestor HEAD origin/release; then
+              echo "Tag ${GITHUB_REF_NAME} is on release"
+              exit 0
+            fi
+            echo "::error::v* 标签必须打在 release 分支的提交上"
+            exit 1
+          fi
+          echo "::error::打包与发布只允许在 release 分支，或基于该分支的 v* 标签上执行"
+          exit 1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: bash scripts/ci-linux-deps.sh
+
+      - name: Run Rust tests
+        working-directory: app/src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --color always 2>&1 | tee rust-test.log
+
+      - name: Upload rust test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-preflight-${{ matrix.os }}
+          path: app/src-tauri/rust-test.log
+
   build:
+    needs: preflight
     permissions:
       contents: write
     strategy:
@@ -15,20 +87,90 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            args: ""
+            lang: zh
+            args: "--bundles nsis,msi"
+          - platform: windows-latest
+            lang: en
+            args: "--bundles nsis,msi"
           - platform: macos-latest
+            lang: zh
+            args: "--target universal-apple-darwin"
+          - platform: macos-latest
+            lang: en
             args: "--target universal-apple-darwin"
           - platform: ubuntu-22.04
+            lang: zh
+            args: ""
+          - platform: ubuntu-22.04
+            lang: en
             args: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/heads/release ]]; then
+            echo "Building from release branch"
+            exit 0
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            git fetch origin release --depth=100
+            if git merge-base --is-ancestor HEAD origin/release; then
+              echo "Tag ${GITHUB_REF_NAME} is on release"
+              exit 0
+            fi
+            echo "::error::v* 标签必须打在 release 分支的提交上"
+            exit 1
+          fi
+          echo "::error::打包与发布只允许在 release 分支，或基于该分支的 v* 标签上执行"
+          exit 1
+
+      - name: Decide release mode
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish=false
+          tag=""
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            publish=true
+            tag="${GITHUB_REF_NAME}"
+          elif [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.create_release }}" == "true" ]]; then
+            publish=true
+            tag="v__VERSION__"
+          fi
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Load release notes
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "::error::缺少 CHANGELOG.md，无法写入升级说明"
+            exit 1
+          fi
+          notes="$(bash scripts/build-release-notes.sh "$version")"
+          delim="NOTES_EOF_${RANDOM}_${RANDOM}"
+          {
+            echo "body<<${delim}"
+            printf '%s\n' "$notes"
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
@@ -37,32 +179,82 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
+        run: bash scripts/ci-linux-deps.sh
+
+      - name: Require updater signing secrets
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          set -euo pipefail
+          if [[ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]]; then
+            echo "::error::缺少 Secrets.TAURI_SIGNING_PRIVATE_KEY，createUpdaterArtifacts 无法签名"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]]; then
+            echo "::error::缺少 Secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            exit 1
+          fi
 
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
 
-      - name: Run Rust tests
-        working-directory: app/src-tauri
-        run: cargo test
+      - name: Update Tauri Icons from SVG
+        working-directory: app
+        run: npx tauri icon public/logo.svg
+
+      - name: Prepare language config (${{ matrix.lang }})
+        run: node scripts/prepare-lang.mjs ${{ matrix.lang }}
 
       - uses: tauri-apps/tauri-action@v0
+        id: tauri
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ice-juice/git-keymaster-app
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
+          owner: ice-juice
+          repo: git-keymaster-app
           args: ${{ matrix.args }}
-          includeUpdaterJson: false
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: Git Keymaster ${{ steps.meta.outputs.tag }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          releaseCommitish: release
+          includeUpdaterJson: ${{ steps.meta.outputs.publish == 'true' }}
+          updaterJsonPreferNsis: true
+          updaterJsonKeepUniversal: true
+          retryAttempts: 3
+
+      - name: Require installer bundles
+        shell: bash
+        run: node scripts/sync-release-assets.mjs --require-bundles
+
+      - name: Stamp locale on installer names
+        shell: bash
+        run: node scripts/rename-release-assets.mjs ${{ matrix.lang == 'en' && 'en-US' || 'zh-CN' }}
+
+      - name: Sync renamed assets to GitHub Release
+        if: steps.meta.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/sync-release-assets.mjs "${{ steps.meta.outputs.tag }}"
 
       - name: Upload installers
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: git-account-manager-${{ matrix.platform }}
+          name: keymaster-${{ matrix.platform }}-${{ matrix.lang }}
           path: |
             app/src-tauri/target/release/bundle/**
             app/src-tauri/target/universal-apple-darwin/release/bundle/**

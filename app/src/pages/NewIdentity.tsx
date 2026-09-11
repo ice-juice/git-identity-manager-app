@@ -12,6 +12,7 @@ import {
 } from "../lib/ipc";
 import { useApp } from "../store";
 import { FieldLabel } from "../ui/common";
+import { writeClipboard } from "../lib/clipboard";
 
 const STEPS = ["填信息", "密钥", "上传公钥", "验证", "归属标识"];
 const DRAFT_KEY = "gam.newIdentity.draft";
@@ -346,7 +347,7 @@ export function NewIdentity() {
 
   async function copyPub() {
     if (!publicKey) return;
-    await navigator.clipboard.writeText(publicKey.trim());
+    await writeClipboard(publicKey.trim());
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
@@ -389,7 +390,7 @@ export function NewIdentity() {
     setMsg("");
     setBusy(true);
     try {
-      await api.uploadPublicKey(keyId, d.name.trim() || "git-account-manager");
+      await api.uploadPublicKey(keyId, d.name.trim() || "git-keymaster");
       set({ uploaded: true });
       setMsg("公钥已通过 PAT 上传到 GitHub");
     } catch (e) {

@@ -105,7 +105,7 @@ export function Repos() {
     <div className="stack-lg">
       <PageHead
         title="仓库管理"
-        desc="登记带 remote 的本地仓库，统一改地址、切换身份、打开目录"
+        desc="只显示本机登记的仓库。换机后请在本机重新扫描，云同步不会把其他机器的路径拉过来。"
         actions={
           <button type="button" className="btn primary" disabled={writesLocked} onClick={() => nav("/clone")}>
             <Plus size={13} />

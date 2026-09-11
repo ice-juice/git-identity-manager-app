@@ -1,0 +1,49 @@
+# 推 dev / release 时只跑跨平台 cargo test，约 3–6 分钟出结论。
+# 不要在这里打包。打 v* 标签后的出包见 release.yml。
+name: Test
+
+on:
+  push:
+    branches: [dev, release]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: bash scripts/ci-linux-deps.sh
+
+      - name: Run Rust tests
+        working-directory: app/src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --color always 2>&1 | tee rust-test.log
+
+      - name: Upload rust test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-${{ matrix.os }}
+          path: app/src-tauri/rust-test.log

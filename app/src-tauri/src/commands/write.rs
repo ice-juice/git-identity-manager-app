@@ -1,6 +1,6 @@
 //! M3 命令层：密钥生成、config 预览/落盘、新建身份、机密二次验证查看。
 
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::model::{Identity, KeyRecord};
 use crate::platform::{self, PlatformOps};
@@ -34,27 +34,35 @@ fn persist_workspace_ssh_config(v: &Vault, text: &str) -> Result<()> {
 }
 
 fn load_workspace_ssh_config(v: &Vault) -> String {
-    sys::read_workspace_ssh_config(v.root()).1
+    sys::read_workspace_ssh_config(v.root())
+        .map(|(_, text)| text)
+        .unwrap_or_default()
 }
 
 /// 按库内身份补齐工作空间 SSH Host。正本若被写成 Include stub 会先清空再重建。
 pub fn reconcile_ssh_hosts(v: &Vault) -> Result<u32> {
-    let data = store::load_data(v)?;
+    let mut data = store::load_data(v)?;
     let dest = sys::workspace_ssh_config(v.root());
     let mut text = std::fs::read_to_string(&dest).unwrap_or_default();
     if sys::text_is_include_only(&text) {
         text.clear();
     }
-    let existing = managed::list(&text);
+    let before_norm = text.clone();
+    text = managed::normalize_unique_hosts(&text);
     let mut added = 0u32;
+    let mut updated = 0u32;
+    let mut data_changed = false;
+    for key in &mut data.keys {
+        if let Some(p) = &key.deployed_path {
+            let portable = sys::portable_deployed_path(p);
+            if portable != *p {
+                key.deployed_path = Some(portable);
+                data_changed = true;
+            }
+        }
+    }
     for id in &data.identities {
         if id.host_alias.trim().is_empty() {
-            continue;
-        }
-        if existing
-            .iter()
-            .any(|e| e.alias.eq_ignore_ascii_case(&id.host_alias))
-        {
             continue;
         }
         let Some(kid) = &id.key_id else {
@@ -69,12 +77,33 @@ pub fn reconcile_ssh_hosts(v: &Vault) -> Result<u32> {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            Some(p) => p.to_string(),
+            Some(p) => {
+                let localized = sys::resolve_identity_file(p, v.root());
+                if sys::expand_path(&localized).exists() {
+                    localized
+                } else {
+                    let stem = sys::key_file_stem(&id.name);
+                    deploy_openssh_files(v, record, &stem, id.strict_mode)?
+                }
+            }
             None => {
                 let stem = sys::key_file_stem(&id.name);
                 deploy_openssh_files(v, record, &stem, id.strict_mode)?
             }
         };
+        let existing = managed::list(&text);
+        if let Some(cur) = existing
+            .iter()
+            .find(|e| e.alias.eq_ignore_ascii_case(&id.host_alias))
+        {
+            let cur_path = sys::resolve_identity_file(&cur.identity_file, v.root());
+            if cur_path == identity_file {
+                continue;
+            }
+            updated += 1;
+        } else {
+            added += 1;
+        }
         text = managed::upsert(
             &text,
             ManagedEntry {
@@ -85,24 +114,41 @@ pub fn reconcile_ssh_hosts(v: &Vault) -> Result<u32> {
                 identities_only: true,
             },
         );
-        added += 1;
     }
-    if added > 0 {
+    if data_changed {
+        store::save_data(v, &data)?;
+    }
+    if added > 0 || updated > 0 || text != before_norm {
         persist_workspace_ssh_config(v, &text)?;
-        util::audit(v.root(), &format!("按身份补齐 SSH Host {added} 条"));
+        util::audit(
+            v.root(),
+            &format!(
+                "按身份补齐/校正 SSH Host 新增 {added} 条、路径更新 {updated} 条{}",
+                if added == 0 && updated == 0 {
+                    "（已去除重复 Host）"
+                } else {
+                    ""
+                }
+            ),
+        );
+    } else {
+        let localized = sys::localize_ssh_config(&text, v.root());
+        if localized != text {
+            persist_workspace_ssh_config(v, &localized)?;
+        }
     }
-    Ok(added)
+    Ok(added + updated)
 }
 
 fn ready_agent(state: &State<AppState>) -> Result<crate::agent::AgentEnv> {
     {
-        let env = state.agent_env.lock().unwrap().clone();
+        let env = recover_lock(&state.agent_env).clone();
         if crate::agent::is_ready(&env) {
             return Ok(env);
         }
     }
     let env = crate::agent::ensure()?;
-    *state.agent_env.lock().unwrap() = env.clone();
+    *recover_lock(&state.agent_env) = env.clone();
     Ok(env)
 }
 
@@ -140,7 +186,7 @@ fn generate_and_store_key(v: &Vault, comment: &str, name: Option<String>) -> Res
         imported_at: now_iso8601(),
     };
     let deployed = deploy_openssh_files(v, &record, &sys::key_file_stem(&stem_name), false)?;
-    record.deployed_path = Some(deployed);
+    record.deployed_path = Some(sys::portable_deployed_path(&deployed));
     Ok(record)
 }
 
@@ -174,7 +220,9 @@ fn deploy_openssh_files(v: &Vault, record: &KeyRecord, stem: &str, strict: bool)
     } else {
         let priv_bytes = store::load_key(v, &record.id)?;
         std::fs::write(&priv_path, &priv_bytes)?;
-        platform::current().secure_key_file(&priv_path)?;
+        if let Err(e) = platform::current().secure_key_file(&priv_path) {
+            log::warn!("收紧密钥文件权限失败 {}：{e}", priv_path.display());
+        }
         priv_path
     };
     Ok(sys::identity_file_for_ssh(&target))
@@ -184,7 +232,7 @@ fn deploy_openssh_files(v: &Vault, record: &KeyRecord, stem: &str, strict: bool)
 #[tauri::command]
 pub fn generate_key(app: AppHandle, state: State<AppState>, comment: String, name: Option<String>) -> Result<KeyRecord> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -311,7 +359,7 @@ pub struct CreateIdentityResult {
 #[tauri::command]
 pub fn create_identity(app: AppHandle, state: State<AppState>, args: CreateIdentityArgs) -> Result<CreateIdentityResult> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -344,7 +392,7 @@ pub fn create_identity(app: AppHandle, state: State<AppState>, args: CreateIdent
     let stem = sys::key_file_stem(&args.name);
     let identity_file = deploy_openssh_files(v, &record, &stem, args.strict_mode)?;
     if let Some(k) = data.keys.iter_mut().find(|k| k.id == record.id) {
-        k.deployed_path = Some(identity_file.clone());
+        k.deployed_path = Some(sys::portable_deployed_path(&identity_file));
     }
 
     // 写 config（备份 + 原子 + 校验）。
@@ -433,7 +481,7 @@ pub fn stage_identity_draft(
         return Err(AppError::Invalid("别名、主机或密钥不完整，无法验证".into()));
     }
 
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -457,7 +505,7 @@ pub fn stage_identity_draft(
     let stem = sys::key_file_stem(&args.name);
     let identity_file = deploy_openssh_files(v, &record, &stem, args.strict_mode)?;
     if let Some(k) = data.keys.iter_mut().find(|k| k.id == record.id) {
-        k.deployed_path = Some(identity_file.clone());
+        k.deployed_path = Some(sys::portable_deployed_path(&identity_file));
     }
     store::save_data(v, &data)?;
 
@@ -497,7 +545,7 @@ pub struct AbortIdentityDraftArgs {
 pub fn abort_identity_draft(state: State<AppState>, args: AbortIdentityDraftArgs) -> Result<()> {
     let alias = args.host_alias.trim();
     let key_id = args.key_id.trim();
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -534,7 +582,7 @@ pub fn reveal_key_passphrase(
     password: String,
     key_id: String,
 ) -> Result<String> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -565,7 +613,7 @@ pub fn reveal_key_material(
     password: String,
     key_id: String,
 ) -> Result<RevealedKeyMaterial> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -609,7 +657,7 @@ pub struct UpdateIdentityArgs {
 #[tauri::command]
 pub fn update_identity(app: AppHandle, state: State<AppState>, args: UpdateIdentityArgs) -> Result<Identity> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -643,9 +691,13 @@ pub fn update_identity(app: AppHandle, state: State<AppState>, args: UpdateIdent
 
     // 重新部署密钥文件（如果严格模式改变或名字改变）
     let identity_file = if let Some(ref kid) = key_id {
-        if let Some(record) = data.keys.iter().find(|k| &k.id == kid) {
+        if let Some(record) = data.keys.iter().find(|k| &k.id == kid).cloned() {
             let stem = sys::key_file_stem(&args.name);
-            deploy_openssh_files(v, record, &stem, args.strict_mode)?
+            let identity_file = deploy_openssh_files(v, &record, &stem, args.strict_mode)?;
+            if let Some(k) = data.keys.iter_mut().find(|k| k.id == record.id) {
+                k.deployed_path = Some(sys::portable_deployed_path(&identity_file));
+            }
+            identity_file
         } else {
             "".to_string()
         }
@@ -701,7 +753,7 @@ pub fn update_identity(app: AppHandle, state: State<AppState>, args: UpdateIdent
 #[tauri::command]
 pub fn delete_identity(app: AppHandle, state: State<AppState>, identity_id: String) -> Result<()> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);

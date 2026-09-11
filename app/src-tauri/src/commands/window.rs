@@ -1,7 +1,7 @@
 //! 关闭确认、最小化到托盘、退出程序。
 
 use crate::commands::vault::{lock_in_memory, try_grace_unlock_silent};
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -39,12 +39,13 @@ pub fn restore_from_tray(app: &AppHandle) {
 }
 
 pub fn quit_app(app: &AppHandle, state: &AppState) {
+    lock_in_memory(state);
     state.allow_exit.store(true, Ordering::SeqCst);
     app.exit(0);
 }
 
 fn persist_close_action(state: &AppState, action: &str) -> Result<()> {
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.close_action = Some(action.to_string());
     cfg.save()
 }
@@ -79,12 +80,12 @@ pub fn apply_close_choice(
 
 #[tauri::command]
 pub fn get_close_preference(state: State<AppState>) -> Option<String> {
-    state.config.lock().unwrap().close_action.clone()
+    recover_lock(&state.config).close_action.clone()
 }
 
 #[tauri::command]
 pub fn clear_close_preference(state: State<AppState>) -> Result<()> {
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.close_action = None;
     cfg.save()
 }

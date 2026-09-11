@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>隐私账号管理 (支持伸缩折叠 & 一键全折叠/全展开 & 2FA掩码查看) - 设计原型</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script>
+    function toggleGroup(header) {
+      const group = header.parentElement;
+      group.classList.toggle('collapsed');
+    }
+    function expandAll() {
+      document.querySelectorAll('.platform-group').forEach(g => g.classList.remove('collapsed'));
+    }
+    function collapseAll() {
+      document.querySelectorAll('.platform-group').forEach(g => g.classList.add('collapsed'));
+    }
+    function revealTotp(btn, code) {
+      const parent = btn.parentElement;
+      parent.innerHTML = `
+        <span style="font-size:11px; color:#1d4ed8; font-weight:600;">2FA:</span>
+        <span class="mono" style="font-size:13.5px; font-weight:700; color:#1e40af; letter-spacing:1px;">${code}</span>
+        <button class="btn sm ghost" style="padding:1px 4px; font-size:11px;" title="复制">📋</button>
+      `;
+    }
+  </script>
+</head>
+<body>
+<div class="window">
+  <!-- 标题栏 -->
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title">Git 多账号管理器</span>
+    <span class="spacer"></span>
+    <span class="lockstate"><span class="lk"></span>已解锁 · 免密查看剩余 12m 45s</span>
+  </div>
+
+  <div class="body">
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+      <div class="brand">
+        <div class="logo">🔑</div>
+        <div class="name">账号管理器<small>juice 的工作空间</small></div>
+      </div>
+      <div class="nav-item"><span class="ic">▣</span>身份总览<span class="badge">3</span></div>
+      <div class="nav-item"><span class="ic">🔐</span>密钥管理<span class="badge">4</span></div>
+      <div class="nav-item"><span class="ic">⚙</span>SSH 配置</div>
+      <div class="nav-item"><span class="ic">◈</span>Agent</div>
+      <div class="nav-item"><span class="ic">◨</span>仓库与克隆</div>
+      <div class="nav-group">机密资产</div>
+      <div class="nav-item"><span class="ic">⏱</span>2FA / TOTP<span class="badge">6</span></div>
+      <div class="nav-item active"><span class="ic">👤</span>隐私账号<span class="badge">8</span></div>
+      <div class="nav-item"><span class="ic">☁</span>云同步</div>
+      <div class="grow"></div>
+      <div class="side-foot">
+        <div class="nav-item"><span class="ic">⚙</span>设置</div>
+        <div class="nav-item"><span class="ic">🔒</span>立即锁定</div>
+      </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <h1>隐私账号管理</h1>
+          <div class="sub">同平台多账号智能聚合 · 支持各平台伸缩折叠与一键折叠 · 关联 2FA 按需展示</div>
+        </div>
+        <span class="spacer"></span>
+
+        <!-- 折叠/展开与工具栏 -->
+        <div class="row" style="gap:8px;">
+          <button class="btn sm" onclick="expandAll()" title="展开所有平台账号">▾ 全部展开</button>
+          <button class="btn sm" onclick="collapseAll()" title="折叠所有平台账号，仅显示平台概览">▸ 全部折叠</button>
+          <button class="btn"><span>⇅</span> 排序：最近使用 ▾</button>
+          <button class="btn primary"><span>＋</span> 添加账号</button>
+        </div>
+      </div>
+
+      <div class="content">
+        <!-- 筛选栏与复合搜索 -->
+        <div class="row between" style="margin-bottom: 16px; gap: 16px;">
+          <!-- 分组切换 Tabs -->
+          <div class="group-tabs">
+            <div class="group-tab active">全部账号 <span class="count">8</span></div>
+            <div class="group-tab">💼 工作平台 <span class="count">4</span></div>
+            <div class="group-tab">🧑 个人账号 <span class="count">3</span></div>
+            <div class="group-tab">☁️ 服务器与云 <span class="count">1</span></div>
+            <div class="group-tab" style="border-style:dashed">＋ 分组管理</div>
+          </div>
+
+          <!-- 多词复合检索框 -->
+          <div style="position: relative; width: 320px; flex: 0 0 320px;">
+            <input class="input" placeholder="🔍 检索平台 / 账号 / 标签 / 备注 (多词 AND)..." value="" style="font-size: 13px;">
+          </div>
+        </div>
+
+        <!-- 聚合平台 1: GitHub (当前展开状态 · 3个账号) -->
+        <div class="platform-group">
+          <!-- 平台头部聚合栏：点击可伸缩折叠 -->
+          <div class="platform-header" onclick="toggleGroup(this)" title="点击折叠/展开 GitHub 账号列表">
+            <div class="platform-title">
+              <span class="chevron-icon">▾</span>
+              <span style="color:var(--amber); font-size:16px;" title="已置顶平台">★</span>
+              <div class="totp-icon" style="width:30px; height:30px; font-size:14px; background:#24292e;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+              </div>
+              <span>GitHub</span>
+              <span class="badge2 i" style="font-size:11px;">3 个账号</span>
+              <a href="#" onclick="event.stopPropagation()" style="font-size:12px; color:var(--accent); text-decoration:none;">https://github.com ↗</a>
+            </div>
+            <div class="row" style="gap:6px;" onclick="event.stopPropagation()">
+              <button class="btn sm" title="为此平台添加子账号">＋ 添加账号</button>
+            </div>
+          </div>
+
+          <!-- 子账号列表容器 -->
+          <div class="platform-body">
+            
+            <!-- 子账号 1: techn4950 (主账号 · 联动 2FA 点击查看演示) -->
+            <div class="account-item">
+              <div class="account-user-info">
+                <div class="account-user">
+                  <b>techn4950</b>
+                  <span class="badge2 g" style="font-size:10.5px;">主开发账号</span>
+                  <span class="chip" style="font-size:10.5px;">#工作</span>
+                  <span class="chip" style="font-size:10.5px;">#核心权限</span>
+                </div>
+                <div class="account-meta">
+                  <span>邮箱：<span class="mono">techn@vchangr.com</span></span>
+                  <span>·</span>
+                  <span>上次使用：<span style="color:var(--text-soft);">10 分钟前</span></span>
+                  <span>·</span>
+                  <span>备注：关联 SSH 密钥 id_ed25519_techn</span>
+                </div>
+              </div>
+
+              <!-- 联动 2FA：默认掩码保护，点击 👁️ 查看 -->
+              <div class="row" style="gap:6px; background:#eff6ff; border:1px solid #bfdbfe; padding:4px 10px; border-radius:8px;">
+                <span style="font-size:11px; color:#1d4ed8; font-weight:600;">2FA:</span>
+                <span class="mono" style="letter-spacing:2px; color:#60a5fa; font-size:12px;">••••••</span>
+                <button class="btn sm ghost" style="padding:1px 5px; font-size:11px;" onclick="revealTotp(this, '739 214')" title="查看 2FA 动态码">👁️</button>
+              </div>
+
+              <!-- 密码操作与历史版本低调入口 -->
+              <div class="row" style="gap:8px;">
+                <button class="btn sm" title="复制用户名">👤 复制用户名</button>
+                
+                <div class="account-pwd-box">
+                  <span style="letter-spacing:2px; color:var(--text-mute);">••••••••••••</span>
+                  <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;" title="复制密码 (走免密时效)">🔑 复制密码</button>
+                </div>
+
+                <!-- 低调的历史版本时钟入口 -->
+                <button class="btn sm ghost" title="查看密码历史版本与改密记录 (3条)" style="padding:4px 7px; color:var(--text-mute);">
+                  <span>🕒</span> <small style="font-size:11px; color:var(--text-soft);">3</small>
+                </button>
+
+                <button class="btn sm ghost" style="padding:4px 7px;">⋯</button>
+              </div>
+            </div>
+
+            <!-- 子账号 2: vortaq-ci-bot -->
+            <div class="account-item">
+              <div class="account-user-info">
+                <div class="account-user">
+                  <b>vortaq-ci-bot</b>
+                  <span class="badge2 n" style="font-size:10.5px;">CI/CD 机器人</span>
+                  <span class="chip" style="font-size:10.5px;">#自动化</span>
+                </div>
+                <div class="account-meta">
+                  <span>邮箱：<span class="mono">ci-bot@vortaq.net</span></span>
+                  <span>·</span>
+                  <span>上次使用：<span style="color:var(--text-soft);">昨天 16:30</span></span>
+                  <span>·</span>
+                  <span>备注：用于 GitHub Actions 发布 Release</span>
+                </div>
+              </div>
+
+              <div class="row" style="gap:8px;">
+                <button class="btn sm">👤 复制用户名</button>
+                <div class="account-pwd-box">
+                  <span style="letter-spacing:2px; color:var(--text-mute);">••••••••••••</span>
+                  <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;">🔑 复制密码</button>
+                </div>
+                <button class="btn sm ghost" title="查看密码历史版本 (1条)" style="padding:4px 7px; color:var(--text-mute);">
+                  <span>🕒</span> <small style="font-size:11px; color:var(--text-soft);">1</small>
+                </button>
+                <button class="btn sm ghost" style="padding:4px 7px;">⋯</button>
+              </div>
+            </div>
+
+            <!-- 子账号 3: juice520 -->
+            <div class="account-item">
+              <div class="account-user-info">
+                <div class="account-user">
+                  <b>juice520</b>
+                  <span class="badge2 a" style="font-size:10.5px;">个人账号</span>
+                  <span class="chip" style="font-size:10.5px;">#开源仓库</span>
+                </div>
+                <div class="account-meta">
+                  <span>邮箱：<span class="mono">juice520@outlook.com</span></span>
+                  <span>·</span>
+                  <span>上次使用：<span style="color:var(--text-soft);">2026-08-20</span></span>
+                </div>
+              </div>
+
+              <div class="row" style="gap:8px;">
+                <button class="btn sm">👤 复制用户名</button>
+                <div class="account-pwd-box">
+                  <span style="letter-spacing:2px; color:var(--text-mute);">••••••••••••</span>
+                  <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;">🔑 复制密码</button>
+                </div>
+                <button class="btn sm ghost" title="无历史版本" style="padding:4px 7px; opacity:0.4;">
+                  <span>🕒</span>
+                </button>
+                <button class="btn sm ghost" style="padding:4px 7px;">⋯</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- 聚合平台 2: Cloudflare (演示折叠态 · 点击可展开) -->
+        <div class="platform-group collapsed">
+          <div class="platform-header" onclick="toggleGroup(this)" title="点击展开 Cloudflare 账号列表">
+            <div class="platform-title">
+              <span class="chevron-icon">▾</span>
+              <div class="totp-icon" style="width:30px; height:30px; font-size:13px; background:#f38020;">CF</div>
+              <span>Cloudflare</span>
+              <span class="badge2 i" style="font-size:11px;">2 个账号 (已折叠)</span>
+              <a href="#" onclick="event.stopPropagation()" style="font-size:12px; color:var(--accent); text-decoration:none;">https://dash.cloudflare.com ↗</a>
+            </div>
+            <div class="row" style="gap:6px;" onclick="event.stopPropagation()">
+              <button class="btn sm">＋ 添加账号</button>
+            </div>
+          </div>
+
+          <div class="platform-body">
+            <!-- 子账号 1 -->
+            <div class="account-item">
+              <div class="account-user-info">
+                <div class="account-user">
+                  <b>admin@vchangr.com</b>
+                  <span class="badge2 g" style="font-size:10.5px;">企业管理员</span>
+                </div>
+                <div class="account-meta"><span>备注：主域名 DNS 解析与安全防护规则</span></div>
+              </div>
+              <div class="row" style="gap:8px;">
+                <button class="btn sm">👤 复制用户名</button>
+                <div class="account-pwd-box">
+                  <span style="letter-spacing:2px; color:var(--text-mute);">••••••••••••</span>
+                  <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;">🔑 复制密码</button>
+                </div>
+                <button class="btn sm ghost">⋯</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 聚合平台 3: AWS Console (展开状态) -->
+        <div class="platform-group">
+          <div class="platform-header" onclick="toggleGroup(this)" title="点击折叠/展开 AWS 账号列表">
+            <div class="platform-title">
+              <span class="chevron-icon">▾</span>
+              <div class="totp-icon" style="width:30px; height:30px; font-size:12px; background:#ff9900;">AWS</div>
+              <span>AWS Management Console</span>
+              <span class="badge2 n" style="font-size:11px;">1 个账号</span>
+              <a href="#" onclick="event.stopPropagation()" style="font-size:12px; color:var(--accent); text-decoration:none;">https://console.aws.amazon.com ↗</a>
+            </div>
+            <div class="row" style="gap:6px;" onclick="event.stopPropagation()">
+              <button class="btn sm">＋ 添加账号</button>
+            </div>
+          </div>
+
+          <div class="platform-body">
+            <div class="account-item">
+              <div class="account-user-info">
+                <div class="account-user">
+                  <b>prod-admin</b>
+                  <span class="badge2 a" style="font-size:10.5px;">IAM 根凭据</span>
+                </div>
+                <div class="account-meta">
+                  <span>AccountId：<span class="mono">8829-1920-3341</span></span>
+                  <span>·</span>
+                  <span>上次使用：<span style="color:var(--text-soft);">2 小时前</span></span>
+                </div>
+              </div>
+
+              <!-- 关联 2FA 掩码状态 -->
+              <div class="row" style="gap:6px; background:#eff6ff; border:1px solid #bfdbfe; padding:4px 10px; border-radius:8px;">
+                <span style="font-size:11px; color:#1d4ed8; font-weight:600;">2FA:</span>
+                <span class="mono" style="letter-spacing:2px; color:#60a5fa; font-size:12px;">••••••</span>
+                <button class="btn sm ghost" style="padding:1px 5px; font-size:11px;" onclick="revealTotp(this, '512 883')" title="查看 2FA 动态码">👁️</button>
+              </div>
+
+              <div class="row" style="gap:8px;">
+                <button class="btn sm">👤 复制用户名</button>
+                <div class="account-pwd-box">
+                  <span style="letter-spacing:2px; color:var(--text-mute);">••••••••••••</span>
+                  <button class="btn sm primary" style="padding:2px 8px; font-size:11.5px;">🔑 复制密码</button>
+                </div>
+                <button class="btn sm ghost" title="查看密码历史版本 (1条)" style="padding:4px 7px;">
+                  <span>🕒</span> <small style="font-size:11px; color:var(--text-soft);">1</small>
+                </button>
+                <button class="btn sm ghost" style="padding:4px 7px;">⋯</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

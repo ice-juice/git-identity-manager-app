@@ -12,7 +12,6 @@ import {
   EyeOff,
   Zap,
   History,
-  Timer,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -26,16 +25,15 @@ import {
   type AutoSyncSettings,
   type CloudSnapshot,
 } from "../lib/ipc";
-import { PageHead, Card, Badge, FieldLabel } from "../ui/common";
+import { PageHead, Card, Badge } from "../ui/common";
 import { useApp } from "../store";
 
 const AUTO_PRESETS: { label: string; minutes: number }[] = [
   { label: "关闭", minutes: 0 },
   { label: "15 分钟", minutes: 15 },
-  { label: "30 分钟", minutes: 30 },
+  { label: "30 分钟 (推荐)", minutes: 30 },
   { label: "1 小时", minutes: 60 },
   { label: "2 小时", minutes: 120 },
-  { label: "6 小时", minutes: 360 },
 ];
 
 export function SyncPage() {
@@ -81,34 +79,43 @@ export function SyncPage() {
   const [importSuccess, setImportSuccess] = useState<BackupSummary | null>(null);
   const [importErr, setImportErr] = useState<string | null>(null);
 
-  // 加载已保存配置和状态
+  // 只读启动/自动同步留下的本地缓存，进页不探测、不同步。
   async function loadInitial() {
-    setLoadingStatus(true);
     try {
-      const cfg = await api.getCloudSyncConfig();
-      if (cfg) {
-        setS3Config(cfg);
+      const page = await api.getCloudSyncPage();
+      if (page.config) {
+        setS3Config(page.config);
       }
-      const st = await api.getCloudSyncStatus();
+      setCloudStatus(page.status);
+      setAutoSync(page.autoSync);
+      setSnapshots(page.snapshots);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function refreshRemote(lite: boolean) {
+    setLoadingStatus(true);
+    setLoadingSnaps(true);
+    try {
+      const [st, snaps] = await Promise.all([
+        api.getCloudSyncStatus(lite),
+        api.listCloudSnapshots(!lite).catch(() => []),
+      ]);
       setCloudStatus(st);
-      const auto = await api.getAutoSyncSettings();
-      setAutoSync(auto);
-      try {
-        setSnapshots(await api.listCloudSnapshots());
-      } catch {
-        setSnapshots([]);
-      }
+      setSnapshots(snaps);
     } catch (e) {
       console.error(e);
     } finally {
       setLoadingStatus(false);
+      setLoadingSnaps(false);
     }
   }
 
   async function loadSnapshots() {
     setLoadingSnaps(true);
     try {
-      setSnapshots(await api.listCloudSnapshots());
+      setSnapshots(await api.listCloudSnapshots(true));
     } catch {
       setSnapshots([]);
     } finally {
@@ -126,7 +133,6 @@ export function SyncPage() {
       const p = ev.payload;
       setSyncNotice(`${p.ok ? "✅" : "❌"} ${p.message}`);
       void loadInitial();
-      void loadSnapshots();
     })
       .then((fn) => {
         unlisten = fn;
@@ -177,6 +183,36 @@ export function SyncPage() {
     }
   }
 
+  async function exportS3File() {
+    try {
+      const selected = await save({
+        defaultPath: `gam-s3-${s3Config.bucket || "config"}.json`,
+        filters: [{ name: "GAM S3/R2 配置", extensions: ["json"] }],
+      });
+      if (!selected) return;
+      await api.exportS3Config(selected, s3Config);
+      setSyncNotice("✅ 已导出 S3/R2 配置文件");
+    } catch (e) {
+      setSyncNotice(`❌ 导出配置失败: ${errMessage(e)}`);
+    }
+  }
+
+  async function importS3File() {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "GAM S3/R2 配置", extensions: ["json"] }],
+      });
+      if (!selected || typeof selected !== "string") return;
+      const cfg = await api.importS3Config(selected);
+      setS3Config(cfg);
+      setSyncNotice("✅ 已导入 S3/R2 配置，请确认后保存");
+    } catch (e) {
+      setSyncNotice(`❌ 导入配置失败: ${errMessage(e)}`);
+    }
+  }
+
   // 测试云端连通性
   async function testConnection() {
     if (!s3Config.endpoint || !s3Config.bucket || !s3Config.accessKeyId || !s3Config.secretAccessKey) {
@@ -187,7 +223,7 @@ export function SyncPage() {
     setTestResult(null);
     try {
       const ms = await api.testCloudSyncConfig(s3Config);
-      setTestResult({ ok: true, msg: `连接成功！探测对象写入与读取耗时 ${ms} ms` });
+      setTestResult({ ok: true, msg: `连接正常，读写探测延迟 ${ms} ms` });
     } catch (e) {
       setTestResult({ ok: false, msg: errMessage(e) });
     } finally {
@@ -195,17 +231,9 @@ export function SyncPage() {
     }
   }
 
-  // 刷新云同步状态
+  // 刷新云同步状态（完整探测，并同步刷新快照）
   async function refreshStatus() {
-    setLoadingStatus(true);
-    try {
-      const st = await api.getCloudSyncStatus();
-      setCloudStatus(st);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingStatus(false);
-    }
+    await refreshRemote(false);
   }
 
   // 推送到云端 (Push)
@@ -214,13 +242,14 @@ export function SyncPage() {
       alert("请先填写并保存云存储配置");
       return;
     }
-    if (!confirm("确定要将当前本地工作空间的最新资产加密推送到云端存储吗？")) return;
+    if (!confirm("确定要将当前本地工作空间加密推送到云端存储吗？")) return;
     setSyncing("push");
     setSyncNotice(null);
     try {
       const res: SyncResult = await api.cloudSyncPush();
-      setSyncNotice(`✅ ${res.message}（时间：${new Date(res.syncedAt).toLocaleString()}）`);
+      setSyncNotice(`✅ ${res.message}`);
       await refreshStatus();
+      await loadSnapshots();
     } catch (e) {
       setSyncNotice(`❌ 推送失败: ${errMessage(e)}`);
     } finally {
@@ -234,12 +263,12 @@ export function SyncPage() {
       alert("请先填写并保存云存储配置");
       return;
     }
-    if (!confirm("确定要从云端存储拉取加密数据并合并到本地工作空间吗？")) return;
+    if (!confirm("确定要从云端存储拉取最新加密数据并合并到本地吗？")) return;
     setSyncing("pull");
     setSyncNotice(null);
     try {
       const res: SyncResult = await api.cloudSyncPull();
-      setSyncNotice(`✅ ${res.message}（包含 ${res.identityCount} 个身份，${res.keyCount} 把密钥）`);
+      setSyncNotice(`✅ ${res.message}（${res.identityCount} 个身份，${res.keyCount} 把密钥）`);
       await refreshStatus();
     } catch (e) {
       setSyncNotice(`❌ 拉取失败: ${errMessage(e)}`);
@@ -341,17 +370,19 @@ export function SyncPage() {
     if (!cloudStatus) return { text: "检测中", cls: "muted" };
     switch (cloudStatus.status) {
       case "synced":
-        return { text: "已与云端同步", cls: "ok" };
+        return { text: "已同步", cls: "ok" };
       case "local_ahead":
         return { text: "本地有待推送变更", cls: "warn" };
       case "remote_ahead":
         return { text: "云端有待拉取更新", cls: "info" };
       case "different_workspace":
-        return { text: "云端与当前工作空间不一致", cls: "danger" };
+        return { text: "与当前空间不一致", cls: "danger" };
       case "not_synced":
-        return { text: "云端尚未存在备份", cls: "warn" };
+        return { text: "云端暂无备份", cls: "warn" };
+      case "checking":
+        return { text: writesLocked ? "启动同步中" : "等待下次同步", cls: "muted" };
       default:
-        return { text: "尚未配置云存储", cls: "muted" };
+        return { text: "未配置云存储", cls: "muted" };
     }
   })();
 
@@ -359,7 +390,7 @@ export function SyncPage() {
     <div className="stack-lg">
       <PageHead
         title="云端同步与备份"
-        desc="端到端零知识加密云备份（v1.1）与本地离线归档导出（M6）"
+        desc="启动时自动拉取并检查一次；之后按定时规则与本地编辑推送。进入本页不会重复探测云端。"
         actions={
           <div className="flex gap-2">
             <button
@@ -376,7 +407,7 @@ export function SyncPage() {
               onClick={() => setActiveTab("backup")}
             >
               <FileArchive size={13} style={{ marginRight: 4 }} />
-              离线加密备份 (M6)
+              离线备份包
             </button>
           </div>
         }
@@ -384,7 +415,7 @@ export function SyncPage() {
 
       {activeTab === "cloud" && (
         <>
-          {/* 云同步状态总览卡片 */}
+          {/* 板块 1: 云同步状态与快速操作 */}
           <Card
             title="云端同步状态"
             actions={
@@ -397,13 +428,13 @@ export function SyncPage() {
                   onClick={refreshStatus}
                   style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
                 >
-                  <RefreshCw size={12} className={loadingStatus ? "spin" : ""} />
-                  刷新状态
+                  <RefreshCw size={12} className={loadingStatus ? "animate-spin" : ""} />
+                  刷新
                 </button>
               </div>
             }
           >
-            <div className="stat-card-row mb-4">
+            <div className="stat-card-row mb-3">
               <div className="stat-card">
                 <div className="stat-card-title">本地资产</div>
                 <div className="stat-card-body">
@@ -416,19 +447,27 @@ export function SyncPage() {
                 </div>
               </div>
               <div className="stat-card">
-                <div className="stat-card-title">云端快照</div>
+                <div className="stat-card-title">云端状态</div>
                 <div className="stat-card-body">
                   <div
                     className="stat-card-val"
                     style={{
-                      fontSize: 18,
+                      fontSize: 16,
                       color: cloudStatus?.remoteExists ? "var(--green)" : "var(--text-soft)",
                     }}
                   >
-                    {cloudStatus?.remoteExists ? "已就绪" : "无快照"}
+                    {cloudStatus?.status === "checking" || (loadingStatus && !cloudStatus?.remoteExists)
+                      ? "检测中…"
+                      : cloudStatus?.remoteExists
+                        ? "已就绪"
+                        : "待初次推送"}
                   </div>
                   <div className="stat-card-sub">
-                    {cloudStatus?.remoteExists ? "加密备份有效" : "待初次推送"}
+                    {cloudStatus?.status === "checking"
+                      ? "正在读取云端清单"
+                      : cloudStatus?.headerReady
+                        ? "换机恢复头部正常"
+                        : "无云端快照"}
                   </div>
                 </div>
               </div>
@@ -444,13 +483,13 @@ export function SyncPage() {
                 </div>
               </div>
               <div className="stat-card">
-                <div className="stat-card-title">存储与加密</div>
+                <div className="stat-card-title">安全算法</div>
                 <div className="stat-card-body">
-                  <div className="stat-card-val" style={{ fontSize: 16, color: "var(--accent)" }}>
+                  <div className="stat-card-val" style={{ fontSize: 15, color: "var(--accent)" }}>
                     E2EE
                   </div>
                   <div className="stat-card-sub">
-                    S3/R2 · XChaCha20
+                    XChaCha20-Poly1305
                   </div>
                 </div>
               </div>
@@ -459,10 +498,10 @@ export function SyncPage() {
             {syncNotice && (
               <div
                 style={{
-                  padding: "8px 12px",
+                  padding: "7px 10px",
                   borderRadius: 6,
-                  fontSize: 12,
-                  marginBottom: 12,
+                  fontSize: 11.5,
+                  marginBottom: 10,
                   background: syncNotice.startsWith("✅") ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)",
                   color: syncNotice.startsWith("✅") ? "var(--green)" : "var(--red)",
                   border: "1px solid",
@@ -473,183 +512,110 @@ export function SyncPage() {
               </div>
             )}
 
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="btn primary sm"
-                disabled={writesLocked || syncing !== null || cloudStatus?.status === "unconfigured"}
-                onClick={handlePush}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                <CloudUpload size={14} />
-                {syncing === "push" ? "正在加密推送…" : "推送到云端 (Push)"}
-              </button>
-              <button
-                type="button"
-                className="btn ghost sm"
-                disabled={syncing !== null || cloudStatus?.status === "unconfigured" || !cloudStatus?.remoteExists}
-                onClick={handlePull}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                <CloudDownload size={14} />
-                {syncing === "pull" ? "正在解密同步…" : "从云端拉取并同步 (Pull)"}
-              </button>
-            </div>
-          </Card>
-
-          <Card
-            title="定时同步"
-            actions={
-              <span className="muted" style={{ fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <Timer size={12} />
-                打开程序时会先拉取一次
-              </span>
-            }
-          >
-            <div className="stack">
-              <FieldLabel
-                name="自动同步间隔"
-                tip="编辑身份、密钥或 SSH 后会立刻先合并再推送。解锁或从托盘打开后立刻从云端拉取；之后按间隔再执行「先拉后推」。本地没有身份时不会把空数据覆盖到云端。R2 免费额度每月 100 万次写、1000 万次读，推荐 30 分钟。"
-              />
-              <div className="choice-row">
-                {AUTO_PRESETS.map((p) => {
-                  const on = (autoSync?.minutes ?? 30) === p.minutes;
-                  return (
-                    <button
-                      key={p.minutes}
-                      type="button"
-                      className={"choice" + (on ? " on" : "")}
-                      disabled={savingAuto}
-                      style={{ flex: "1 1 90px", padding: "8px 8px" }}
-                      onClick={async () => {
-                        setSavingAuto(true);
-                        try {
-                          const minutes = await api.setAutoSyncMinutes(p.minutes);
-                          setAutoSync((prev) =>
-                            prev ? { ...prev, minutes } : { minutes, defaultMinutes: 30, lastAutoSyncAt: null, lastAutoSyncMessage: null },
-                          );
-                        } catch (e) {
-                          setSyncNotice(`❌ ${errMessage(e)}`);
-                        } finally {
-                          setSavingAuto(false);
-                        }
-                      }}
-                    >
-                      <strong>{p.label}</strong>
-                      {p.minutes === 30 && <div className="muted sm">推荐</div>}
-                    </button>
-                  );
-                })}
+            <div className="sync-action-bar">
+              <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5, flex: 1, minWidth: 180 }}>
+                以上为最近一次启动或自动同步的结果。需要立刻核对云端时再点「刷新」。数据出机前全量加密。
               </div>
-              <div className="muted" style={{ fontSize: 12, lineHeight: 1.55 }}>
-                多端同时改同一身份时，以较新的保存时间为准；删除会记墓碑并同步到其他电脑。编辑保存后会马上推送，缩短冲突窗口。
-                Cloudflare R2 免费额度：10 GB 存储、每月 100 万次 Class A（写/列举）、1000 万次 Class B（读），出站流量免费。
-                两台电脑按 30 分钟同步，每月大约 2 万次读写，远低于限额。15 分钟也可以；不建议短于 5 分钟。
-              </div>
-              {autoSync?.lastAutoSyncAt && (
-                <div className="muted sm">
-                  最近自动同步：{new Date(autoSync.lastAutoSyncAt).toLocaleString()}
-                  {autoSync.lastAutoSyncMessage ? ` · ${autoSync.lastAutoSyncMessage}` : ""}
-                </div>
-              )}
-              <div>
+              <div className="sync-action-btns">
                 <button
                   type="button"
-                  className="btn ghost sm"
-                  disabled={syncing !== null || cloudStatus?.status === "unconfigured"}
-                  onClick={async () => {
-                    setSyncing("pull");
-                    setSyncNotice(null);
-                    try {
-                      const res = await api.runAutoSyncNow();
-                      setSyncNotice(res ? `✅ ${res.message}` : "当前无需同步或正在进行中");
-                      await refreshStatus();
-                      await loadSnapshots();
-                    } catch (e) {
-                      setSyncNotice(`❌ ${errMessage(e)}`);
-                    } finally {
-                      setSyncing(null);
-                    }
-                  }}
+                  className="btn primary"
+                  disabled={writesLocked || syncing !== null || cloudStatus?.status === "unconfigured"}
+                  onClick={handlePush}
                 >
-                  立即同步一次（先拉后推）
+                  <CloudUpload size={14} />
+                  {syncing === "push" ? "正在加密推送…" : "推送到云端 (Push)"}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={syncing !== null || cloudStatus?.status === "unconfigured" || !cloudStatus?.remoteExists}
+                  onClick={handlePull}
+                >
+                  <CloudDownload size={14} />
+                  {syncing === "pull" ? "正在同步…" : "从云端拉取 (Pull)"}
                 </button>
               </div>
             </div>
           </Card>
 
+          {/* 板块 2: 精简后的定时同步 */}
           <Card
-            title="云端历史快照"
+            title="定时自动同步"
             actions={
               <button
                 type="button"
                 className="btn ghost sm"
-                disabled={loadingSnaps || cloudStatus?.status === "unconfigured"}
-                onClick={loadSnapshots}
+                disabled={syncing !== null || cloudStatus?.status === "unconfigured"}
+                onClick={async () => {
+                  setSyncing("pull");
+                  setSyncNotice(null);
+                  try {
+                    const res = await api.runAutoSyncNow();
+                    setSyncNotice(res ? `✅ ${res.message}` : "当前已是最新状态");
+                    await refreshStatus();
+                    await loadSnapshots();
+                  } catch (e) {
+                    setSyncNotice(`❌ ${errMessage(e)}`);
+                  } finally {
+                    setSyncing(null);
+                  }
+                }}
                 style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
               >
-                <History size={12} />
-                {loadingSnaps ? "读取中…" : "刷新快照"}
+                <RefreshCw size={12} className={syncing === "pull" ? "animate-spin" : ""} />
+                立即同步一次
               </button>
             }
           >
-            <p className="muted" style={{ fontSize: 12, marginBottom: 10, lineHeight: 1.55 }}>
-              每次成功推送会额外保存一份加密快照。保留<strong>最近 10 份</strong>，以及<strong>近 14 天每天的第一份</strong>，可按日期恢复。更早的中间快照会自动清理。日常冷备份仍可用下方的离线 <code>.gambackup</code>。
-            </p>
-            {snapshots.length === 0 ? (
-              <div className="muted sm">还没有历史快照。推送一次后会出现在这里。</div>
-            ) : (
-              <div className="list">
-                {snapshots.map((s, i) => {
-                  const day = new Date(s.createdAt).toLocaleDateString();
-                  const prevDay = i > 0 ? new Date(snapshots[i - 1].createdAt).toLocaleDateString() : "";
-                  const showDay = day !== prevDay;
-                  return (
-                  <div className="list-row" key={s.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-                    {showDay && (
-                      <div className="muted sm" style={{ fontWeight: 600 }}>{day}</div>
-                    )}
-                    <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
-                    <div className="grow">
-                      <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                        <span>{new Date(s.createdAt).toLocaleString()}</span>
-                        {s.isDailyFirst && <Badge kind="info">当日首份</Badge>}
-                        {s.isRecent && <Badge kind="ok">最近</Badge>}
-                      </div>
-                      <div className="muted sm">
-                        {s.identityCount} 个身份 · {s.keyCount} 把密钥 · {s.repoCount} 个仓库
-                        {s.clientName ? ` · ${s.clientName}` : ""}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn ghost sm"
-                      disabled={writesLocked || restoringId !== null}
-                      onClick={async () => {
-                        if (!confirm(`确定恢复到 ${new Date(s.createdAt).toLocaleString()} 的快照吗？将覆盖当前身份、密钥与 SSH 配置。`)) return;
-                        setRestoringId(s.id);
-                        try {
-                          const res = await api.restoreCloudSnapshot(s.id);
-                          setSyncNotice(`✅ ${res.message}`);
-                          await refreshStatus();
-                        } catch (e) {
-                          setSyncNotice(`❌ 恢复失败: ${errMessage(e)}`);
-                        } finally {
-                          setRestoringId(null);
-                        }
-                      }}
-                    >
-                      {restoringId === s.id ? "恢复中…" : "恢复此版本"}
-                    </button>
-                    </div>
+            <div className="stack">
+              <div className="between" style={{ flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600 }}>同步周期</div>
+                  <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>
+                    启动时自动拉取并检查一次。之后按周期先拉后推；编辑身份或密钥后会立即推送。
                   </div>
-                  );
-                })}
+                </div>
+                <div className="choice-row" style={{ margin: 0 }}>
+                  {AUTO_PRESETS.map((p) => {
+                    const on = (autoSync?.minutes ?? 30) === p.minutes;
+                    return (
+                      <button
+                        key={p.minutes}
+                        type="button"
+                        className={"choice" + (on ? " on" : "")}
+                        disabled={savingAuto}
+                        style={{ padding: "4px 9px", fontSize: 11 }}
+                        onClick={async () => {
+                          setSavingAuto(true);
+                          try {
+                            const minutes = await api.setAutoSyncMinutes(p.minutes);
+                            setAutoSync((prev) =>
+                              prev ? { ...prev, minutes } : { minutes, defaultMinutes: 30, lastAutoSyncAt: null, lastAutoSyncMessage: null },
+                            );
+                          } catch (e) {
+                            setSyncNotice(`❌ ${errMessage(e)}`);
+                          } finally {
+                            setSavingAuto(false);
+                          }
+                        }}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            )}
+              {autoSync?.lastAutoSyncAt && (
+                <div className="muted sm" style={{ borderTop: "1px dashed var(--border)", paddingTop: 5, marginTop: 2 }}>
+                  最近自动同步：{new Date(autoSync.lastAutoSyncAt).toLocaleString()}
+                  {autoSync.lastAutoSyncMessage ? ` · ${autoSync.lastAutoSyncMessage}` : ""}
+                </div>
+              )}
+            </div>
           </Card>
 
-          {/* S3 / R2 存储配置卡片 */}
+          {/* 板块 3: S3 / Cloudflare R2 存储配置 (上移到历史快照之前) */}
           <Card
             title="S3 / Cloudflare R2 存储配置"
             actions={
@@ -665,7 +631,7 @@ export function SyncPage() {
               <div>
                 <label className="field-label">存储端点 (Endpoint)</label>
                 <input
-                  className="input"
+                  className="input mono"
                   placeholder="https://<account_id>.r2.cloudflarestorage.com"
                   value={s3Config.endpoint}
                   onChange={(e) => setS3Config({ ...s3Config, endpoint: e.target.value })}
@@ -674,7 +640,7 @@ export function SyncPage() {
               <div>
                 <label className="field-label">存储桶名称 (Bucket)</label>
                 <input
-                  className="input"
+                  className="input mono"
                   placeholder="my-git-vault-backup"
                   value={s3Config.bucket}
                   onChange={(e) => setS3Config({ ...s3Config, bucket: e.target.value })}
@@ -683,16 +649,16 @@ export function SyncPage() {
               <div>
                 <label className="field-label">区域 (Region)</label>
                 <input
-                  className="input"
+                  className="input mono"
                   placeholder="auto 或 us-east-1"
                   value={s3Config.region}
                   onChange={(e) => setS3Config({ ...s3Config, region: e.target.value })}
                 />
               </div>
               <div>
-                <label className="field-label">对象路径前缀 (Prefix)</label>
+                <label className="field-label">路径前缀 (Prefix)</label>
                 <input
-                  className="input"
+                  className="input mono"
                   placeholder="gam-sync/"
                   value={s3Config.prefix}
                   onChange={(e) => setS3Config({ ...s3Config, prefix: e.target.value })}
@@ -701,7 +667,7 @@ export function SyncPage() {
               <div>
                 <label className="field-label">Access Key ID</label>
                 <input
-                  className="input"
+                  className="input mono"
                   placeholder="AKIA..."
                   value={s3Config.accessKeyId}
                   onChange={(e) => setS3Config({ ...s3Config, accessKeyId: e.target.value })}
@@ -712,7 +678,7 @@ export function SyncPage() {
                 <div style={{ position: "relative" }}>
                   <input
                     type={showSecret ? "text" : "password"}
-                    className="input"
+                    className="input mono"
                     placeholder="Secret Key"
                     value={s3Config.secretAccessKey}
                     onChange={(e) => setS3Config({ ...s3Config, secretAccessKey: e.target.value })}
@@ -733,10 +699,10 @@ export function SyncPage() {
             {testResult && (
               <div
                 style={{
-                  padding: "8px 12px",
+                  padding: "7px 10px",
                   borderRadius: 6,
-                  fontSize: 12,
-                  marginBottom: 12,
+                  fontSize: 11.5,
+                  marginBottom: 10,
                   background: testResult.ok ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)",
                   color: testResult.ok ? "var(--green)" : "var(--red)",
                   border: "1px solid",
@@ -763,31 +729,111 @@ export function SyncPage() {
                 style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
               >
                 <Zap size={13} />
-                {testing ? "正在探测连通性…" : "测试连通性"}
+                {testing ? "正在测试…" : "测试连通性"}
+              </button>
+              <button type="button" className="btn ghost sm" onClick={exportS3File}>
+                <Download size={13} />
+                导出配置
+              </button>
+              <button type="button" className="btn ghost sm" onClick={importS3File}>
+                <Upload size={13} />
+                导入配置
               </button>
             </div>
           </Card>
 
-          {/* 端到端加密安全保证说明 */}
+          {/* 板块 4: 云端历史快照 (下移一个板块至存储配置下方) */}
+          <Card
+            title="云端历史快照"
+            actions={
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={loadingSnaps || cloudStatus?.status === "unconfigured"}
+                onClick={loadSnapshots}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
+                <History size={12} />
+                {loadingSnaps ? "读取中…" : "刷新快照"}
+              </button>
+            }
+          >
+            <div className="muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+              自动保留最近 10 份快照与近 14 天每日版本，支持一键按需回滚。
+            </div>
+            {snapshots.length === 0 ? (
+              <div className="muted sm">
+                {loadingSnaps ? "正在读取云端快照…" : "暂无历史快照，完成初次推送后将在此显示。"}
+              </div>
+            ) : (
+              <div className="list">
+                {snapshots.map((s, i) => {
+                  const day = new Date(s.createdAt).toLocaleDateString();
+                  const prevDay = i > 0 ? new Date(snapshots[i - 1].createdAt).toLocaleDateString() : "";
+                  const showDay = day !== prevDay;
+                  return (
+                    <div className="list-row" key={s.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 5 }}>
+                      {showDay && (
+                        <div className="muted sm" style={{ fontWeight: 600 }}>{day}</div>
+                      )}
+                      <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+                        <div className="grow">
+                          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                            <span>{new Date(s.createdAt).toLocaleString()}</span>
+                            {s.isDailyFirst && <Badge kind="info">当日首份</Badge>}
+                            {s.isRecent && <Badge kind="ok">最近</Badge>}
+                          </div>
+                          <div className="muted sm" style={{ marginTop: 2 }}>
+                            {s.identityCount} 个身份 · {s.keyCount} 把密钥 · {s.repoCount} 个仓库
+                            {s.clientName ? ` · ${s.clientName}` : ""}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          disabled={writesLocked || restoringId !== null}
+                          onClick={async () => {
+                            if (!confirm(`确定恢复到 ${new Date(s.createdAt).toLocaleString()} 的快照吗？将覆盖当前身份、密钥与配置。`)) return;
+                            setRestoringId(s.id);
+                            try {
+                              const res = await api.restoreCloudSnapshot(s.id);
+                              setSyncNotice(`✅ ${res.message}`);
+                              await refreshStatus();
+                            } catch (e) {
+                              setSyncNotice(`❌ 恢复失败: ${errMessage(e)}`);
+                            } finally {
+                              setRestoringId(null);
+                            }
+                          }}
+                        >
+                          {restoringId === s.id ? "恢复中…" : "恢复此版本"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          {/* 底部轻量安全提示 */}
           <div
             style={{
-              padding: "12px 14px",
+              padding: "9px 12px",
               borderRadius: "var(--radius)",
               background: "rgba(99, 102, 241, 0.05)",
-              border: "1px solid rgba(99, 102, 241, 0.2)",
+              border: "1px solid rgba(99, 102, 241, 0.18)",
               fontSize: 11.5,
-              lineHeight: 1.6,
+              lineHeight: 1.5,
               color: "var(--text-soft)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--accent)", fontWeight: 600, marginBottom: 4 }}>
-              <Shield size={14} />
-              端到端零知识加密保护承诺
-            </div>
+            <Shield size={15} style={{ color: "var(--accent)", flexShrink: 0 }} />
             <div>
-              1. <b>出机即密文</b>：数据在离开本地设备前，均使用工作空间主密钥与 <b>XChaCha20-Poly1305</b> 军工级对称算法加密，云端服务商无法查看任何内容。<br />
-              2. <b>对象名 HMAC 混淆</b>：所有云端文件名均通过 <code>HMAC-SHA256</code> 转换为随机散列名，不泄漏任何用户名、身份别名、仓库名称或文件路径。<br />
-              3. <b>原子一致性</b>：遵循“先上传加密数据对象，最后提交 Manifest 清单”的事务原则，断网或异常中断绝不损坏既有快照。
+              <strong>零知识端到端加密：</strong>所有资产均在本地通过 XChaCha20-Poly1305 加密后上传，云端文件名经 HMAC 散列混淆，服务商及任何第三方均无法解密。
             </div>
           </div>
         </>
@@ -797,8 +843,8 @@ export function SyncPage() {
         <div className="stack-lg">
           {/* M6 本地离线加密导出 */}
           <Card title="导出离线加密备份 (.gambackup)">
-            <p className="muted" style={{ fontSize: 11.5, marginBottom: 12 }}>
-              将当前工作空间的全部身份、密钥元数据、本地仓库关联以及私钥副本打包为单一文件。使用独立的备份密码加密，适合离线换机迁移或冷备份。
+            <p className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+              将工作空间身份、密钥与仓库私钥打包为单一离线加密文件，适合本地冷备份或换机导入。
             </p>
 
             <div className="grid grid-cols-2 gap-3 mb-3">
@@ -807,7 +853,7 @@ export function SyncPage() {
                 <input
                   type="password"
                   className="input"
-                  placeholder="输入保护此备份的密码"
+                  placeholder="输入密码"
                   value={exportPw}
                   onChange={(e) => setExportPw(e.target.value)}
                 />
@@ -817,7 +863,7 @@ export function SyncPage() {
                 <input
                   type="password"
                   className="input"
-                  placeholder="重复输入上述密码"
+                  placeholder="重复输入密码"
                   value={exportPw2}
                   onChange={(e) => setExportPw2(e.target.value)}
                 />
@@ -831,16 +877,16 @@ export function SyncPage() {
             {exportResult && (
               <div
                 style={{
-                  padding: "8px 12px",
+                  padding: "7px 10px",
                   borderRadius: 6,
-                  fontSize: 12,
-                  marginBottom: 12,
+                  fontSize: 11.5,
+                  marginBottom: 10,
                   background: "rgba(16, 185, 129, 0.1)",
                   color: "var(--green)",
                   border: "1px solid rgba(16, 185, 129, 0.3)",
                 }}
               >
-                ✅ 备份导出成功！包含 {exportResult.identityCount} 个身份，{exportResult.keyCount} 把密钥，{exportResult.repoCount} 个仓库记录。
+                ✅ 备份导出成功：包含 {exportResult.identityCount} 个身份，{exportResult.keyCount} 把密钥，{exportResult.repoCount} 个仓库。
               </div>
             )}
 
@@ -849,17 +895,17 @@ export function SyncPage() {
               className="btn primary sm"
               disabled={exporting}
               onClick={handleExportBackup}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
             >
-              <Download size={14} />
-              {exporting ? "正在打包并加密…" : "导出离线加密备份文件"}
+              <Download size={13} />
+              {exporting ? "正在打包并加密…" : "导出离线备份"}
             </button>
           </Card>
 
           {/* M6 本地离线备份导入 */}
-          <Card title="导入与还原加密备份">
-            <p className="muted" style={{ fontSize: 11.5, marginBottom: 12 }}>
-              从已导出的 <code>.gambackup</code> 备份包中恢复数据。支持先解密预览资产明细，再安全合并到当前工作空间。
+          <Card title="导入与还原离线备份">
+            <p className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+              从已导出的 <code>.gambackup</code> 文件中恢复数据，可先解密预览清单后再确认合并。
             </p>
 
             <div className="grid grid-cols-2 gap-3 mb-3">
@@ -882,7 +928,7 @@ export function SyncPage() {
                 <input
                   type="password"
                   className="input"
-                  placeholder="输入导出时设置的备份密码"
+                  placeholder="输入导出时的密码"
                   value={importPw}
                   onChange={(e) => setImportPw(e.target.value)}
                 />
@@ -896,39 +942,35 @@ export function SyncPage() {
             {importSuccess && (
               <div
                 style={{
-                  padding: "8px 12px",
+                  padding: "7px 10px",
                   borderRadius: 6,
-                  fontSize: 12,
-                  marginBottom: 12,
+                  fontSize: 11.5,
+                  marginBottom: 10,
                   background: "rgba(16, 185, 129, 0.1)",
                   color: "var(--green)",
                   border: "1px solid rgba(16, 185, 129, 0.3)",
                 }}
               >
-                ✅ 备份导入并合并成功！当前工作空间已更新（包含 {importSuccess.identityCount} 个身份，{importSuccess.keyCount} 把密钥）。
+                ✅ 备份导入成功：当前工作空间已合并更新（{importSuccess.identityCount} 个身份，{importSuccess.keyCount} 把密钥）。
               </div>
             )}
 
             {importSummary && (
               <div
                 style={{
-                  padding: "10px 14px",
+                  padding: "9px 12px",
                   borderRadius: 6,
-                  fontSize: 12,
+                  fontSize: 11.5,
                   background: "rgba(99, 102, 241, 0.08)",
                   border: "1px solid rgba(99, 102, 241, 0.25)",
-                  marginBottom: 12,
+                  marginBottom: 10,
                 }}
               >
-                <div style={{ fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>
+                <div style={{ fontWeight: 600, color: "var(--accent)", marginBottom: 3 }}>
                   📦 备份包解密成功，资产清单：
                 </div>
                 <div style={{ color: "var(--text)" }}>
-                  • 备份时间：{new Date(importSummary.createdAt).toLocaleString()}<br />
-                  • 身份数量：<b>{importSummary.identityCount}</b> 个<br />
-                  • 密钥数量：<b>{importSummary.keyCount}</b> 把<br />
-                  • 关联仓库：<b>{importSummary.repoCount}</b> 个<br />
-                  • 包含 GitHub PAT：{importSummary.hasGithubPat ? "是" : "否"}
+                  • 备份时间：{new Date(importSummary.createdAt).toLocaleString()} · 身份：<b>{importSummary.identityCount}</b> 个 · 密钥：<b>{importSummary.keyCount}</b> 把 · 仓库：<b>{importSummary.repoCount}</b> 个
                 </div>
               </div>
             )}
@@ -939,21 +981,21 @@ export function SyncPage() {
                 className="btn ghost sm"
                 disabled={inspecting || !importPath}
                 onClick={handleInspectBackup}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
               >
-                <Eye size={14} />
-                {inspecting ? "正在验证密码与解密…" : "解密并预览备份"}
+                <Eye size={13} />
+                {inspecting ? "正在验证解密…" : "解密并预览"}
               </button>
               {importSummary && (
                 <button
                   type="button"
                   className="btn primary sm"
-                  disabled={writesLocked || importing}
+                  disabled={importing}
                   onClick={handleConfirmImport}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
                 >
-                  <Upload size={14} />
-                  {importing ? "正在合并导入…" : "确认合并导入到当前工作空间"}
+                  <Upload size={13} />
+                  {importing ? "正在导入合并…" : "确认合并到当前空间"}
                 </button>
               )}
             </div>

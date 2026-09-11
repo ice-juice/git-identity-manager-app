@@ -14,6 +14,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 
 const RECOVERY_HKDF_INFO: &[u8] = b"gam-recovery-kek-v1";
+const BIOMETRIC_HKDF_INFO: &[u8] = b"gam-biometric-kek-v1";
 
 fn b64(bytes: &[u8]) -> String {
     B64.encode(bytes)
@@ -101,6 +102,48 @@ pub fn unwrap_with_recovery(env: &Envelope, secret: &RecoverySecret) -> Result<M
     Ok(MasterKey::from_bytes(arr))
 }
 
+fn biometric_kek(raw: &[u8], salt: &[u8]) -> [u8; KEY_LEN] {
+    let hk = Hkdf::<Sha256>::new(Some(salt), raw);
+    let mut okm = [0u8; KEY_LEN];
+    hk.expand(BIOMETRIC_HKDF_INFO, &mut okm)
+        .expect("32 字节输出有效");
+    okm
+}
+
+/// 用生物识别硬件输出包裹 MK（本机第三信封，不上云）。
+pub fn wrap_with_biometric(mk: &MasterKey, raw: &[u8]) -> Result<Envelope> {
+    if raw.is_empty() {
+        return Err(AppError::Crypto);
+    }
+    let salt = new_salt();
+    let kek = biometric_kek(raw, &salt);
+    let nonce = new_nonce();
+    let wrapped = aead_encrypt(&kek, &nonce, mk.as_bytes())?;
+    Ok(Envelope {
+        salt: b64(&salt),
+        nonce: b64(&nonce),
+        wrapped_key: b64(&wrapped),
+    })
+}
+
+/// 用生物识别硬件输出解开 MK。
+pub fn unwrap_with_biometric(env: &Envelope, raw: &[u8]) -> Result<MasterKey> {
+    let salt = unb64(&env.salt)?;
+    if salt.len() != SALT_LEN {
+        return Err(AppError::Crypto);
+    }
+    let kek = biometric_kek(raw, &salt);
+    let nonce = to_nonce(&unb64(&env.nonce)?)?;
+    let wrapped = unb64(&env.wrapped_key)?;
+    let mk_bytes = aead_decrypt(&kek, &nonce, &wrapped).map_err(|_| AppError::BiometricStale)?;
+    if mk_bytes.len() != KEY_LEN {
+        return Err(AppError::Crypto);
+    }
+    let mut arr = [0u8; KEY_LEN];
+    arr.copy_from_slice(&mk_bytes);
+    Ok(MasterKey::from_bytes(arr))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +199,15 @@ mod tests {
         let from_rec = unwrap_with_recovery(&re, &secret).unwrap();
         assert_eq!(from_pw.as_bytes(), from_rec.as_bytes());
         assert_eq!(from_pw.as_bytes(), mk.as_bytes());
+    }
+
+    #[test]
+    fn biometric_envelope_roundtrip() {
+        let mk = MasterKey([11u8; KEY_LEN]);
+        let raw = [9u8; 64];
+        let env = wrap_with_biometric(&mk, &raw).unwrap();
+        let got = unwrap_with_biometric(&env, &raw).unwrap();
+        assert_eq!(got.as_bytes(), mk.as_bytes());
+        assert!(unwrap_with_biometric(&env, &[8u8; 64]).is_err());
     }
 }
