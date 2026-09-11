@@ -13,14 +13,20 @@
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-09-11
+
 ### 新增功能
 - **云存储小白引导**：云端同步与换机恢复提供 Cloudflare R2、AWS S3、MinIO 及其他 S3 兼容盘的逐步说明，教你如何建桶、拿密钥并填回本软件
 
 ### 优化功能
 - **Agent托管**：侧栏与页面标题由「Agent」改为「Agent托管」
 - **Agent 检测**：进入页面沿用上次结果，不再每次重测；需要时再点「重新检测」。macOS 不再跑用不上的 `git config`，`ssh-add` 也只查一次
-- **Windows 安装目录**：NSIS 向导新装默认 `%LOCALAPPDATA%\GitKeymaster`；若本机已有「御钥师」、`Git Keymaster` 或 `Git.Keymaster` 目录，升级/覆盖安装仍装回原处，避免并排出第二份
+- **Windows 安装目录**：NSIS 向导新装默认 `%LOCALAPPDATA%\GitKeymaster`；开始菜单和窗口标题仍是「御钥师」
 - **工作空间路径**：含 `<>"|?*`、错误冒号或 Windows 保留名时直接拒绝；空格、非英文字符与同步盘只警告，仍可继续
+
+### 修复问题
+- **升级安装目录**：本机已有「御钥师」、`Git Keymaster` 或 `Git.Keymaster` 目录时，覆盖安装仍装回原处，避免并排出第二份
+- **安装包主程序名**：打包脚本把主程序固定为 `git-keymaster`，不再误写成旧的 `git-account-manager`
 
 ## [1.3.1] - 2026-09-11
 
