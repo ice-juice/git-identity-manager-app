@@ -31,6 +31,10 @@ pub enum AppError {
     Invalid(String),
     #[error("正在从云端同步，请稍后再修改")]
     Busy,
+    /// 当前平台不提供该能力（如移动端没有 ssh-agent / 本地 Git）。
+    /// 前端据此隐藏入口，正常路径不应触发，仅作兜底护栏。
+    #[error("当前平台不支持该功能：{0}")]
+    Unsupported(&'static str),
     #[error("{0}")]
     Other(String),
 }
@@ -53,6 +57,7 @@ impl AppError {
             AppError::Serde(_) => "SERDE",
             AppError::Invalid(_) => "INVALID",
             AppError::Busy => "BUSY",
+            AppError::Unsupported(_) => "UNSUPPORTED_PLATFORM",
             AppError::Other(_) => "OTHER",
         }
     }

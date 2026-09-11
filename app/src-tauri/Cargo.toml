@@ -21,7 +21,7 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.3", features = ["tray-icon", "image-png"] }
+tauri = { version = "2.11.3" }
 tauri-plugin-log = "2"
 
 # ---- M1 加密栈 ----
@@ -47,8 +47,6 @@ similar = "2"
 # ---- M5 仓库/地址识别/PAT ----
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking", "socks"] }
 tauri-plugin-dialog = "2.7.3"
-arboard = "3"
-tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 url = "2"
 semver = "1"
@@ -59,9 +57,19 @@ sha1 = "0.10"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "ico", "bmp", "gif"] }
 rqrr = "0.8"
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
-# Linux 不编 xcap：它强制拉 pipewire 0.10 / libspa，和 Ubuntu 22.04 的头文件对不上。
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+# ---- 桌面专属 ----
+# 注意：Cargo 的 target cfg 表达式**不认** Tauri 的 `desktop` / `mobile` 别名
+# （那是 tauri-build 注入的 rustc cfg，只能写在源码里），所以这里必须显式列举 target_os。
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+tauri = { version = "2.11.3", features = ["tray-icon", "image-png"] }
+arboard = "3"
+tauri-plugin-updater = "2"
+
+# 屏幕扫码只在 Windows / macOS 上编：
+# - Linux 上 xcap 强制拉 pipewire 0.10 / libspa，和 Ubuntu 22.04 的头文件对不上；
+# - Android / iOS 没有"截屏找二维码"这回事，改用相机扫码。
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 xcap = "0.9"
 
 [target.'cfg(windows)'.dependencies]
@@ -85,6 +93,8 @@ windows = { version = "0.61", features = [
 ] }
 windows-future = "0.2"
 
+# 注意：`target_os = "macos"` **不覆盖 iOS**。M13 接 iOS 生物识别时，
+# 需共享的条目要显式改成 cfg(any(target_os = "macos", target_os = "ios"))。
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
 block2 = "0.6"
@@ -97,5 +107,6 @@ objc2-local-authentication = { version = "0.3.2", default-features = false, feat
     "block2",
 ] }
 
-[target.'cfg(not(windows))'.dependencies]
+# 原生文件选择器只给非 Windows 的桌面平台；移动端走 tauri-plugin-dialog / SAF。
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rfd = "0.15"

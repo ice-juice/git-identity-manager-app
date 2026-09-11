@@ -17,14 +17,22 @@ pub fn current() -> impl PlatformOps {
     windows::Windows
 }
 
-#[cfg(not(windows))]
+#[cfg(mobile)]
+mod mobile;
+#[cfg(mobile)]
+pub fn current() -> impl PlatformOps {
+    mobile::Mobile
+}
+
+#[cfg(all(not(windows), not(mobile)))]
 mod unix;
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(mobile)))]
 pub fn current() -> impl PlatformOps {
     unix::Unix
 }
 
 /// Tauri updater 清单里的 `{target}`，如 windows / darwin / linux。
+/// 移动端不走自更新（交给应用商店），这里只为日志与诊断保留可读值。
 pub fn updater_target() -> &'static str {
     #[cfg(target_os = "windows")]
     {
@@ -34,7 +42,20 @@ pub fn updater_target() -> &'static str {
     {
         "darwin"
     }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        "android"
+    }
+    #[cfg(target_os = "ios")]
+    {
+        "ios"
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "ios"
+    )))]
     {
         "linux"
     }
@@ -61,13 +82,17 @@ pub fn updater_platform_key() -> String {
     format!("{}-{}", updater_target(), updater_arch())
 }
 
-/// 是否支持应用内整包自更新。Linux 仅 AppImage 可用。
+/// 是否支持应用内整包自更新。Linux 仅 AppImage 可用；移动端一律交给应用商店。
 pub fn self_update_supported() -> bool {
-    #[cfg(target_os = "linux")]
+    #[cfg(mobile)]
+    {
+        false
+    }
+    #[cfg(all(not(mobile), target_os = "linux"))]
     {
         std::env::var_os("APPIMAGE").is_some()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(not(mobile), not(target_os = "linux")))]
     {
         true
     }
@@ -81,10 +106,13 @@ mod tests {
     fn windows_self_update_is_supported() {
         #[cfg(windows)]
         assert!(self_update_supported());
-        #[cfg(target_os = "linux")]
+        #[cfg(all(not(mobile), target_os = "linux"))]
         assert_eq!(self_update_supported(), std::env::var_os("APPIMAGE").is_some());
         #[cfg(target_os = "macos")]
         assert!(self_update_supported());
+        // 移动端必须关掉应用内自更新，否则会给出无效的更新入口。
+        #[cfg(mobile)]
+        assert!(!self_update_supported());
     }
 
     #[test]
@@ -94,7 +122,9 @@ mod tests {
         assert!(
             key.starts_with("windows-")
                 || key.starts_with("darwin-")
-                || key.starts_with("linux-"),
+                || key.starts_with("linux-")
+                || key.starts_with("android-")
+                || key.starts_with("ios-"),
             "unexpected platform key {key}"
         );
     }

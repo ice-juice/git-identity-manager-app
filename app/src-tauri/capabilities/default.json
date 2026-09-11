@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "桌面端权限：含窗口控制与应用内自更新，移动端不适用。",
+  "platforms": [
+    "windows",
+    "macOS",
+    "linux"
+  ],
   "windows": [
     "main"
   ],

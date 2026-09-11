@@ -47,8 +47,29 @@ pub const LEGACY_INSTANCE_LOCK: &str = "com.jeck.gitaccountmanager.instance.lock
 /// HTTP User-Agent。
 pub const USER_AGENT: &str = "git-keymaster";
 
-/// 本机配置根目录（Windows 为 `%APPDATA%`，其它平台回退临时目录）。
+/// 由宿主在启动早期注入的本机配置根目录。
+///
+/// 移动端沙箱目录只能通过 Tauri 的 path API 拿到（Android 要问 Context），
+/// 所以 `run()` 会在建 `AppState` 之前调用 [`init_base_dir`] 把它填进来。
+/// 桌面端也走同一条路，`%APPDATA%` 只作为未注入时的兜底。
+static BASE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// 注入本机配置根目录。只有第一次调用生效，重复调用被忽略。
+///
+/// **必须在任何 `AppConfig::load()` / `config_base_dir()` 之前调用**，
+/// 否则移动端会退化到临时目录，保险库可能被系统清空。
+pub fn init_base_dir(dir: PathBuf) {
+    let _ = BASE_DIR.set(dir);
+}
+
+/// 本机配置根目录。
+///
+/// 优先用 [`init_base_dir`] 注入的值；未注入时桌面回退 `%APPDATA%`，
+/// 最后才回退临时目录（仅单元测试等无宿主场景会走到）。
 pub fn config_base_dir() -> PathBuf {
+    if let Some(dir) = BASE_DIR.get() {
+        return dir.clone();
+    }
     std::env::var("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir())

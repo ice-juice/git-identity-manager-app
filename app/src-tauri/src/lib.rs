@@ -35,11 +35,17 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 从访达 / 开始菜单启动时 PATH 往往没有 Homebrew、Git for Windows。
-    crate::sys::augment_search_path();
-    crate::identity::migrate_app_data();
-    crate::sys::migrate_legacy_ssh_names();
-    crate::agent::unify::migrate_legacy_scripts();
+    // 这些迁移都在动本机 `~/.ssh` 与启动脚本，移动端没有对应物。
+    // 注意：`migrate_app_data` 依赖本机配置根目录，移动端要等沙箱路径注入后
+    // 才能跑，所以它挪到了 `setup()` 里。
+    #[cfg(desktop)]
+    {
+        // 从访达 / 开始菜单启动时 PATH 往往没有 Homebrew、Git for Windows。
+        crate::sys::augment_search_path();
+        crate::identity::migrate_app_data();
+        crate::sys::migrate_legacy_ssh_names();
+        crate::agent::unify::migrate_legacy_scripts();
+    }
 
     #[cfg(windows)]
     {
@@ -55,12 +61,19 @@ pub fn run() {
         std::process::exit(0);
     }
 
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        .manage(AppState::new())
+        .plugin(tauri_plugin_process::init());
+
+    // 应用内自更新只有桌面端有意义；移动端交给应用商店。
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             commands::vault::vault_status,
             commands::vault::check_workspace_path,
@@ -194,42 +207,67 @@ pub fn run() {
             commands::secrets_ui::icon_get_custom,
         ])
         .setup(|app| {
-            tray::install(app.handle())?;
+            // 移动端的保险库目录只能问 Tauri 的 path API（Android 要走 Context）。
+            // 必须在 `AppState::new()`（内部会 `AppConfig::load()`）之前注入，
+            // 否则会退化到 `std::env::temp_dir()`，保险库可能被系统清空。
+            #[cfg(mobile)]
+            {
+                let dir = app
+                    .path()
+                    .app_data_dir()
+                    .expect("移动端必须能解析应用私有数据目录");
+                std::fs::create_dir_all(&dir).ok();
+                crate::identity::init_base_dir(dir);
+                crate::identity::migrate_app_data();
+            }
+
+            // 桌面端在 `run()` 开头已经迁移过，这里只负责注册状态。
+            app.manage(AppState::new());
+
             #[cfg(desktop)]
             {
+                tray::install(app.handle())?;
                 let handle = app.handle().clone();
                 crate::single_instance::on_ready(move || {
                     let state = handle.state::<AppState>();
                     crate::commands::window::quit_app(&handle, &state);
                 });
+                crate::update::scheduler::start(app.handle().clone());
+                commands::agent::bootstrap_git_agent(app.handle());
             }
             crate::sync::scheduler::start(app.handle().clone());
-            crate::update::scheduler::start(app.handle().clone());
-            commands::agent::bootstrap_git_agent(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() != "main" {
-                return;
+            // 移动端没有"关闭窗口"这回事，托盘/最小化也不存在。
+            #[cfg(mobile)]
+            {
+                let _ = (window, event);
             }
-            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
-                return;
-            };
-            let state = window.state::<AppState>();
-            if state.allow_exit.load(Ordering::SeqCst) {
-                return;
-            }
-            let action = commands::recover_lock(&state.config).close_action.clone();
-            match action.as_deref() {
-                Some("quit") => {}
-                Some("tray") => {
-                    api.prevent_close();
-                    crate::commands::vault::lock_in_memory(&state);
-                    let _ = window.hide();
+            #[cfg(desktop)]
+            {
+                if window.label() != "main" {
+                    return;
                 }
-                _ => {
-                    api.prevent_close();
-                    let _ = window.emit("close-requested", ());
+                let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                    return;
+                };
+                let state = window.state::<AppState>();
+                if state.allow_exit.load(Ordering::SeqCst) {
+                    return;
+                }
+                let action = commands::recover_lock(&state.config).close_action.clone();
+                match action.as_deref() {
+                    Some("quit") => {}
+                    Some("tray") => {
+                        api.prevent_close();
+                        crate::commands::vault::lock_in_memory(&state);
+                        let _ = window.hide();
+                    }
+                    _ => {
+                        api.prevent_close();
+                        let _ = window.emit("close-requested", ());
+                    }
                 }
             }
         })
