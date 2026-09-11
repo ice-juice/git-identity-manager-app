@@ -54,13 +54,35 @@ export function stampLocaleFilename(name, locale) {
   return `${stem}_${locale}${suffix}`;
 }
 
-export function rewriteLatestJson(text, mapping) {
+function rewriteFilenames(text, mapping) {
   let out = text;
   for (const [from, to] of mapping) {
-    if (from === to) continue;
+    if (!from || from === to) continue;
     out = out.split(from).join(to);
   }
   return out;
+}
+
+export function rewriteLatestJson(text, mapping) {
+  try {
+    const data = JSON.parse(text);
+    if (data && typeof data === "object") {
+      if (typeof data.notes === "string") {
+        data.notes = rewriteFilenames(data.notes, mapping);
+      }
+      if (data.platforms && typeof data.platforms === "object") {
+        for (const platform of Object.values(data.platforms)) {
+          if (platform && typeof platform.url === "string") {
+            platform.url = rewriteFilenames(platform.url, mapping);
+          }
+        }
+      }
+      return `${JSON.stringify(data, null, 2)}\n`;
+    }
+  } catch {
+    // latest.json 以外的文本仍按文件名替换
+  }
+  return rewriteFilenames(text, mapping);
 }
 
 function walkFiles(dir, out = []) {
@@ -153,25 +175,42 @@ function runSelfTest() {
     "https://example/Git.Keymaster_1.2.0_x64-setup.exe",
     [["Git.Keymaster_1.2.0_x64-setup.exe", "Git.Keymaster_1.2.0_x64_zh-CN-setup.exe"]],
   );
-  if (!rewritten.endsWith("Git.Keymaster_1.2.0_x64_zh-CN-setup.exe")) {
+  if (!rewritten.includes("Git.Keymaster_1.2.0_x64_zh-CN-setup.exe")) {
     throw new Error("latest.json rewrite failed");
+  }
+  const jsonRewritten = rewriteLatestJson(
+    JSON.stringify({
+      notes: "### 优化功能\n- 见 Git.Keymaster_1.2.0_x64-setup.exe",
+      platforms: { win: { url: "https://example/Git.Keymaster_1.2.0_x64-setup.exe" } },
+    }),
+    [["Git.Keymaster_1.2.0_x64-setup.exe", "Git.Keymaster_1.2.0_x64_zh-CN-setup.exe"]],
+  );
+  const parsed = JSON.parse(jsonRewritten);
+  if (!parsed.notes.startsWith("### 优化功能")) {
+    throw new Error("latest.json notes heading was rewritten");
+  }
+  if (!parsed.notes.includes("Git.Keymaster_1.2.0_x64_zh-CN-setup.exe")) {
+    throw new Error("latest.json notes filename was not rewritten");
   }
   console.log("[rename] self-test ok");
 }
 
-const arg = process.argv[2];
-if (arg === "--test") {
-  runSelfTest();
-} else if (LOCALES.includes(arg)) {
-  const cwd = process.cwd();
-  const roots = [
-    path.join(cwd, "app", "src-tauri", "target", "release", "bundle"),
-    path.join(cwd, "app", "src-tauri", "target", "universal-apple-darwin", "release", "bundle"),
-  ];
-  const mapping = renameBundles(arg, roots);
-  fs.writeFileSync(path.join(cwd, "renamed-release-assets.json"), JSON.stringify(mapping, null, 2), "utf-8");
-  patchLatestJsonFiles(cwd, mapping);
-} else {
-  console.error("usage: node scripts/rename-release-assets.mjs zh-CN|en-US|--test");
-  process.exit(1);
+const invoked = process.argv[1] && path.basename(process.argv[1]) === "rename-release-assets.mjs";
+if (invoked) {
+  const arg = process.argv[2];
+  if (arg === "--test") {
+    runSelfTest();
+  } else if (LOCALES.includes(arg)) {
+    const cwd = process.cwd();
+    const roots = [
+      path.join(cwd, "app", "src-tauri", "target", "release", "bundle"),
+      path.join(cwd, "app", "src-tauri", "target", "universal-apple-darwin", "release", "bundle"),
+    ];
+    const mapping = renameBundles(arg, roots);
+    fs.writeFileSync(path.join(cwd, "renamed-release-assets.json"), JSON.stringify(mapping, null, 2), "utf-8");
+    patchLatestJsonFiles(cwd, mapping);
+  } else {
+    console.error("usage: node scripts/rename-release-assets.mjs zh-CN|en-US|--test");
+    process.exit(1);
+  }
 }

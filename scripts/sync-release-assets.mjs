@@ -2,6 +2,7 @@
  * 把带语言后缀的安装包同步到 GitHub Release，并删掉未加后缀的旧文件名。
  * 用法：
  *   node scripts/sync-release-assets.mjs vX.Y.Z
+ *   node scripts/sync-release-assets.mjs --fix-notes vX.Y.Z
  *   node scripts/sync-release-assets.mjs --require-bundles
  *   node scripts/sync-release-assets.mjs --test
  */
@@ -9,6 +10,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildReleaseNotes } from "./build-release-notes.mjs";
+import { rewriteLatestJson } from "./rename-release-assets.mjs";
 
 const REPO = "ice-juice/git-keymaster-app";
 const BUNDLE_ROOTS = [
@@ -69,6 +73,14 @@ export function listInstallerBundles(cwd = process.cwd()) {
   );
 }
 
+function loadCanonicalNotes(version) {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  return buildReleaseNotes(version, {
+    changelog: fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8"),
+    guide: fs.readFileSync(path.join(root, "docs/release-download-guide.md"), "utf8"),
+  }).replace(/\s+$/, "\n");
+}
+
 function runGh(args, { ignoreFail = false } = {}) {
   const result = spawnSync("gh", args, { stdio: "inherit" });
   if (result.error) {
@@ -81,6 +93,25 @@ function runGh(args, { ignoreFail = false } = {}) {
     process.exit(result.status ?? 1);
   }
   return result.status ?? 1;
+}
+
+function fixPublishedNotes(tag) {
+  if (!tag || !/^v\d/.test(tag)) {
+    console.error("usage: node scripts/sync-release-assets.mjs --fix-notes vX.Y.Z");
+    process.exit(1);
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gam-latest-"));
+  try {
+    runGh(["release", "download", tag, "--repo", REPO, "--pattern", "latest.json", "--dir", tmp, "--clobber"]);
+    const latestPath = path.join(tmp, "latest.json");
+    const data = JSON.parse(fs.readFileSync(latestPath, "utf8"));
+    data.notes = loadCanonicalNotes(tag.replace(/^v/, ""));
+    fs.writeFileSync(latestPath, `${JSON.stringify(data, null, 2)}\n`);
+    runGh(["release", "upload", tag, latestPath, "--repo", REPO, "--clobber"]);
+    console.log(`[sync] restored notes headings for ${tag}`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 function requireBundles() {
@@ -128,13 +159,10 @@ function syncTag(tag) {
     );
     const latestPath = path.join(tmp, "latest.json");
     if (downloaded === 0 && fs.existsSync(latestPath)) {
-      let text = fs.readFileSync(latestPath, "utf8");
-      for (const [from, to] of mapping) {
-        if (from !== to) {
-          text = text.split(from).join(to);
-        }
-      }
-      fs.writeFileSync(latestPath, text);
+      const text = rewriteLatestJson(fs.readFileSync(latestPath, "utf8"), mapping);
+      const data = JSON.parse(text);
+      data.notes = loadCanonicalNotes(tag.replace(/^v/, ""));
+      fs.writeFileSync(latestPath, `${JSON.stringify(data, null, 2)}\n`);
       runGh(["release", "upload", tag, latestPath, "--repo", REPO, "--clobber"]);
     }
   } finally {
@@ -170,6 +198,11 @@ function runSelfTest() {
     if (listInstallerBundles(tmp).length < 2) {
       throw new Error("expected installer files under bundle/");
     }
+    const notes = loadCanonicalNotes("1.3.0");
+    const headings = [...notes.matchAll(/^### (.+)$/gm)].map((m) => m[1]);
+    if (headings.join(",") !== "新增功能,优化功能,修复问题,下载建议") {
+      throw new Error(`canonical notes headings: ${headings.join(",")}`);
+    }
     console.log("[sync] self-test ok");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -183,6 +216,8 @@ if (invoked) {
     runSelfTest();
   } else if (arg === "--require-bundles") {
     requireBundles();
+  } else if (arg === "--fix-notes") {
+    fixPublishedNotes(process.argv[3]);
   } else {
     syncTag(arg);
   }
