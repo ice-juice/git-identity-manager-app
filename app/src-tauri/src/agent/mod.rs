@@ -242,30 +242,78 @@ pub fn list(env: &AgentEnv) -> Result<Vec<AgentKey>> {
     Ok(parse_agent_list(&out))
 }
 
-/// 把一把 key 加载进 agent：Rust 侧解密 → stdin 喂 `ssh-add -`。
+/// 把一把 key 加载进 agent：Rust 侧解密后交给 `ssh-add`。
+/// Windows / Linux 走 stdin（`ssh-add -`）；macOS 先写 0600 临时文件再 `ssh-add`，避免 Apple ssh-add 不认 `-`。
 pub fn load_key(v: &Vault, env: &AgentEnv, key_id: &str) -> Result<()> {
     let enc = store::load_key(v, key_id)?;
     let enc_text = String::from_utf8_lossy(&enc).to_string();
     let secrets = store::load_secrets(v)?;
     let passphrase = secrets.key_passphrases.get(key_id).map(|s| s.as_str());
     let plain = key::decrypt_to_openssh(&enc_text, passphrase)?;
-    let (_o, e, code) = run_ssh_add(env, &["-"], Some(plain.as_bytes()), SSH_ADD_MUTATE_TIMEOUT)?;
-    if code != 0 {
-        let hint = e.trim();
-        if is_agent_unreachable(hint) {
-            return Err(AppError::Other(match crate::ssh::toolchain::host_os() {
-                "windows" => {
-                    "ssh-add 连不上 agent。Windows OpenSSH 服务可能未启动，已尝试改用 Git 自带 ssh-agent。请再点一次「一键加载」。"
-                        .into()
-                }
-                _ => {
-                    "ssh-add 连不上 agent。请点「确保运行」拉起本机 ssh-agent，然后重试。".into()
-                }
-            }));
+    add_private_key(env, plain.as_bytes())
+}
+
+fn add_private_key(env: &AgentEnv, pem: &[u8]) -> Result<()> {
+    let os = crate::ssh::toolchain::host_os();
+    let (err, code) = if prefers_file_add_for(os) {
+        add_via_tempfile(env, pem)?
+    } else {
+        let (_o, e, c) = run_ssh_add(env, &["-"], Some(pem), SSH_ADD_MUTATE_TIMEOUT)?;
+        if c != 0 && should_retry_via_file(&e) {
+            add_via_tempfile(env, pem)?
+        } else {
+            (e, c)
         }
-        return Err(AppError::Other(format!("ssh-add 加载失败：{hint}")));
+    };
+    if code == 0 {
+        return Ok(());
+    }
+    let hint = err.trim();
+    if is_agent_unreachable(hint) {
+        return Err(AppError::Other(match os {
+            "windows" => {
+                "ssh-add 连不上 agent。Windows OpenSSH 服务可能未启动，已尝试改用 Git 自带 ssh-agent。请再点一次「一键加载」。"
+                    .into()
+            }
+            _ => "ssh-add 连不上 agent。请点「确保运行」拉起本机 ssh-agent，然后重试。".into(),
+        }));
+    }
+    Err(AppError::Other(format!("ssh-add 加载失败：{hint}")))
+}
+
+fn write_secret_file(path: &Path, pem: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| AppError::Io(format!("写入临时私钥失败：{e}")))?;
+        f.write_all(pem)
+            .map_err(|e| AppError::Io(format!("写入临时私钥失败：{e}")))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, pem).map_err(|e| AppError::Io(format!("写入临时私钥失败：{e}")))?;
     }
     Ok(())
+}
+
+fn add_via_tempfile(env: &AgentEnv, pem: &[u8]) -> Result<(String, i32)> {
+    let tmp = std::env::temp_dir().join(format!("gam-add-{}.key", uuid::Uuid::new_v4()));
+    let written = write_secret_file(&tmp, pem);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    let path = tmp.display().to_string();
+    let result = run_ssh_add(env, &[&path], None, SSH_ADD_MUTATE_TIMEOUT);
+    let _ = std::fs::remove_file(&tmp);
+    let (_o, e, code) = result?;
+    Ok((e, code))
 }
 
 /// 卸载一把 key（把公钥写临时文件后 `ssh-add -d`）。
@@ -313,12 +361,34 @@ pub fn is_ready(env: &AgentEnv) -> bool {
     list(env).is_ok()
 }
 
+/// macOS 自带 `ssh-add` 对 `ssh-add -`（stdin）不稳定：无 TTY 时可能把 `-` 当文件名，
+/// 或卡住等口令。Apple 文档按文件路径加载。Windows / Linux 仍走已验证的 stdin。
+pub(crate) fn prefers_file_add_for(os: &str) -> bool {
+    os == "macos"
+}
+
+/// stdin 失败后是否值得改走临时文件（缺文件名 `-`、格式拒识等）。
+pub(crate) fn should_retry_via_file(stderr: &str) -> bool {
+    let h = stderr.to_ascii_lowercase();
+    if h.contains("identity added") {
+        return false;
+    }
+    h.contains("error loading key")
+        || h.contains("invalid format")
+        || h.contains("illegal option")
+        || h.contains("no such file")
+}
+
 fn is_agent_unreachable(hint: &str) -> bool {
     let h = hint.to_ascii_lowercase();
+    // `Error loading key "-": No such file or directory` 是 stdin 不被支持，不是 agent 挂了。
+    if h.contains("error loading key") || h.contains("invalid format") {
+        return false;
+    }
     h.contains("connection refused")
-        || h.contains("no such file or directory")
         || h.contains("could not open a connection")
         || h.contains("error connecting to agent")
+        || h.contains("no such file or directory")
 }
 
 /// 统一使用 Git 自带 ssh-agent：先复用固定套接字，没有再启动。
@@ -602,6 +672,9 @@ fn run_ssh_add(
     let mut cmd = Command::new(&exe);
     cmd.args(args);
     apply_agent_env(&mut cmd, env);
+    // GUI 进程没有 TTY。不设这个时，macOS/部分 OpenSSH 会挂起等口令或 ASKPASS。
+    cmd.env("SSH_ASKPASS_REQUIRE", "never");
+    cmd.env_remove("SSH_ASKPASS");
     crate::sys::hide_console(&mut cmd);
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());
@@ -901,5 +974,31 @@ mod tests {
         assert!(is_agent_unreachable("Error connecting to agent: Connection refused"));
         assert!(is_agent_unreachable("Could not open a connection to your authentication agent."));
         assert!(!is_agent_unreachable("Identity added: (stdin)"));
+        assert!(!is_agent_unreachable("Error loading key \"-\": No such file or directory"));
+        assert!(is_agent_unreachable("Could not open a connection to your authentication agent: No such file or directory"));
+    }
+
+    #[test]
+    fn macos_prefers_file_add_other_os_use_stdin() {
+        assert!(prefers_file_add_for("macos"));
+        assert!(!prefers_file_add_for("windows"));
+        assert!(!prefers_file_add_for("linux"));
+    }
+
+    #[test]
+    fn stdin_failure_should_retry_via_file() {
+        assert!(should_retry_via_file("Error loading key \"-\": No such file or directory"));
+        assert!(should_retry_via_file("Error loading key (stdin): invalid format"));
+        assert!(should_retry_via_file("ssh-add: illegal option -- apple-use-keychain"));
+        assert!(!should_retry_via_file("Identity added: (stdin)"));
+    }
+
+    #[test]
+    fn write_secret_file_roundtrips_and_cleans_up() {
+        let tmp = std::env::temp_dir().join(format!("gam-add-test-{}.key", uuid::Uuid::new_v4()));
+        let pem = b"-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----\n";
+        write_secret_file(&tmp, pem).unwrap();
+        assert_eq!(std::fs::read(&tmp).unwrap(), pem);
+        let _ = std::fs::remove_file(&tmp);
     }
 }

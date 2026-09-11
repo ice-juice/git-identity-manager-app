@@ -170,11 +170,23 @@ pub fn agent_load_all(state: State<'_, AppState>) -> Result<u32> {
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_data(v)?;
     let mut loaded = 0u32;
+    let mut attempted = 0u32;
+    let mut last_err: Option<AppError> = None;
     for identity in &data.identities {
         if let Some(key_id) = &identity.key_id {
-            if agent::load_key(v, &env, key_id).is_ok() {
-                loaded += 1;
+            attempted += 1;
+            match agent::load_key(v, &env, key_id) {
+                Ok(()) => loaded += 1,
+                Err(e) => last_err = Some(e),
             }
+        }
+    }
+    if loaded == 0 {
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+        if attempted == 0 {
+            return Err(AppError::Invalid("没有可加载的身份密钥".into()));
         }
     }
     crate::util::audit(v.root(), &format!("agent 自动加载 {loaded} 把密钥"));

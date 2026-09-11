@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { getName } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Copy, Square, X, Sun, Moon, Palette } from "lucide-react";
 import { AppLogo } from "./AppLogo";
 import { useApp } from "../store";
-import { APP_NAME } from "../lib/config";
+import { APP_LANG, APP_NAME, pickBrandName } from "../lib/config";
 
 const appWindow = (() => {
   try {
@@ -39,13 +40,20 @@ export function TitleBar() {
   }, []);
 
   const unlocked = !!status?.unlocked;
+  const [brandName, setBrandName] = useState(() => pickBrandName(APP_LANG, APP_NAME));
+
+  useEffect(() => {
+    getName()
+      .then((name) => setBrandName(pickBrandName(APP_LANG, name)))
+      .catch(() => setBrandName(pickBrandName(APP_LANG, APP_NAME)));
+  }, []);
 
   return (
     <div className="titlebar">
       {/* 左段：品牌，宽度对齐侧边栏 */}
       <div className="tb-brand" data-tauri-drag-region>
         <AppLogo size={26} />
-        <div className="tb-title">{APP_NAME}</div>
+        <div className="tb-title">{brandName}</div>
       </div>
 
       {/* 右段：路径 + 操作 + 窗口控制 */}

@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { displayNameFor, MAIN_BINARY } from "./brand.mjs";
+import { assertPreparedFiles } from "./check-release-invariants.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,8 +25,8 @@ const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf-8"));
 // 安装包文件名由 rename-release-assets.mjs 统一成 ASCII 的 Git.Keymaster_*。
 // productName 仍是桌面快捷方式、开始菜单、卸载项上的显示名（中文包为御钥师）。
 // Windows 默认安装目录由 windows/installer.nsi 固定为 GitKeymaster，与显示名拆开。
-tauriConf.mainBinaryName = "git-keymaster";
-const displayName = lang === "en" ? "Git Keymaster" : "御钥师";
+tauriConf.mainBinaryName = MAIN_BINARY;
+const displayName = displayNameFor(lang);
 tauriConf.productName = displayName;
 if (tauriConf.app && tauriConf.app.windows && tauriConf.app.windows[0]) {
   tauriConf.app.windows[0].title = displayName;
@@ -34,8 +36,9 @@ const infoPlistPath = path.join(rootDir, "app", "src-tauri", "Info.plist");
 if (fs.existsSync(infoPlistPath)) {
   let plist = fs.readFileSync(infoPlistPath, "utf-8");
   plist = upsertPlistString(plist, "CFBundleDisplayName", displayName);
-  // 程序坞显示用 DisplayName；短名保持 ASCII，避免部分工具按文件夹名解析失败。
-  plist = upsertPlistString(plist, "CFBundleName", "GitKeymaster");
+  // 菜单栏 / 程序坞短名跟界面语言走：中文包是「御钥师」。安装目录与主程序已是 ASCII
+  //（GitKeymaster / git-keymaster），不要再把 CFBundleName 写死成英文。
+  plist = upsertPlistString(plist, "CFBundleName", displayName);
   fs.writeFileSync(infoPlistPath, plist, "utf-8");
 }
 
@@ -58,4 +61,5 @@ fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2), "utf-8");
 const envPath = path.join(rootDir, "app", ".env");
 fs.writeFileSync(envPath, `VITE_APP_LANG=${lang}\n`, "utf-8");
 
+assertPreparedFiles(lang);
 console.log(`[prepare-lang] ${lang} locale=${locale} productName=${tauriConf.productName} title=${tauriConf.app.windows[0].title}`);

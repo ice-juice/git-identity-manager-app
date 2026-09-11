@@ -1,0 +1,25 @@
+---
+description: 发版与品牌名不变量，防止中文包显示英文名等低级错误
+alwaysApply: true
+---
+
+# 发版不变量
+
+改打包、窗口标题、Info.plist、安装脚本或发版流程时必须遵守。改完先跑 `node scripts/check-release-invariants.mjs --test`。
+
+## 显示名 ≠ 标识符
+
+| 用途 | 中文包 | 英文包 | 可否写成 GitKeymaster |
+|---|---|---|---|
+| 左上角、开始菜单、程序坞、`CFBundleName` / `CFBundleDisplayName`、`productName`、窗口 title | 御钥师 | Git Keymaster | 否 |
+| 安装目录、主程序、安装包文件名 | `GitKeymaster` / `git-keymaster` / `Git.Keymaster_*` | 同左 | 是 |
+
+- 中文安装包任何用户可见名称都是「御钥师」，禁止写死 `Git Keymaster` / `GitKeymaster`。
+- `CFBundleName` 必须跟 `displayName` 走。仓库默认 plist 也是「御钥师」。
+- 品牌字符串只改 `scripts/brand.mjs`，由 `prepare-lang.mjs` 写入配置。
+- 标题栏用 `pickBrandName`：`lang === "zh"` 时固定「御钥师」，不要直接渲染 `getName()`。
+
+## 改平台相关代码时
+
+- 不要用 Windows / Linux 行为覆盖 macOS（例如 `ssh-add -` 喂 stdin 在苹果自带 ssh 上不可用）。
+- 中英文、三端都要各自看一眼，不能只验一个安装包。
