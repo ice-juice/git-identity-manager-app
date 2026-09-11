@@ -374,19 +374,32 @@ iOS 还需在 Info.plist 补 `NSFaceIDUsageDescription`，否则调用即崩。
 
 ---
 
-### M8 · 移动端外壳与导航（1 周）
+### M8 · 移动端外壳与导航（✅ 已完成，2026-09-11）
 
-**任务**
+**任务与落地**
 
-1. `lib/platform.ts`：基于 `@tauri-apps/plugin-os` 导出 `isMobile / isAndroid / isIOS`。
-2. `ui/MobileShell.tsx`：底部 5 个 Tab（总览 / TOTP / 账号 / 同步 / 设置），安全区适配 `env(safe-area-inset-*)`。
-3. `App.tsx` 按平台选外壳；`TitleBar.tsx` 移动端不渲染；移动端路由表移除 4 个桌面页面。
-4. `index.css` 新增 `@media (max-width: 600px)` 断点：`.body` 改 column、`.sidebar` 变底部 tab、`.titlebar` 隐藏；触摸目标统一 ≥ 44px；清理 hover-only 交互（改为 active / 长按）。
-5. `main.tsx` 补 viewport meta（`viewport-fit=cover`、禁用缩放）。
+1. `lib/platform.ts`（新增）：**刻意把「是不是手机」和「要不要紧凑布局」拆成两件事**——
+   - `isMobilePlatform()` 决定**能力**（要不要注册桌面专属路由、要不要画窗口按钮）；
+   - `useIsCompact()` 决定**布局**（底部 Tab 还是左侧栏，`matchMedia("(max-width: 640px)")`）。
 
-**交付物**：移动端可在 5 个 Tab 间导航，竖屏 360×640 到 430×932 无横向滚动、无内容截断。
+   收益是可验收性：在 Windows 上把浏览器窗口拉窄就能验收移动端布局，不必先装模拟器；而桌面窗口有 840px 最小宽度（`tauri.conf.json`），打包后的桌面端不会误触紧凑布局。
+   平台判定用 WebView UA（含 iPadOS 13+ 伪装成 Macintosh 时的 `maxTouchPoints` 兜底），**不引入 `@tauri-apps/plugin-os`**——没有 Android 工具链时加依赖等于放一个无法编译验证的版本号。
+2. `ui/MobileShell.tsx`（新增）：顶部精简栏（Logo / 名称 / 锁定状态 / 主题 / 立即锁定）+ 可滚动内容区 + 底部 5 Tab（总览 / 验证码 / 账号 / 同步 / 设置），`env(safe-area-inset-*)` 适配刘海与手势条。不显示工作空间路径（移动端路径固定在沙箱内，用户无从选择也无需知道）。
+3. `App.tsx`：按 `compact` 选外壳、移动端不渲染 `TitleBar`；`/config`、`/agent`、`/repos`、`/clone`、`/identities/new` 在移动端**连路由都不注册**，避免深链接或历史记录把用户带到一个必然报错的页面。
+4. `index.css`：新增 `.m-*` 外壳样式 + `@media (max-width: 640px)` 断点（原文件 **0 条媒体查询**）；触摸目标提到 ≥44px（原 `.nav-item` 只有 `padding: 5px 8px`）；并排两栏在竖屏堆叠。
+5. `index.html`：viewport 补 `viewport-fit=cover` 并禁用缩放，另加 `color-scheme`。
 
-**验收**：小屏（360dp）与大屏（430dp）真机各走一遍导航；桌面 UI 像素级无变化（改动都在媒体查询内）。
+**验收结果**（Vite dev + CDP 模拟 390×844；用浏览器侧 IPC 桩渲染已解锁态，不改任何产品代码）
+
+- 5 个 Tab 导航正常、激活态高亮正确，设置页等密集页面在竖屏可读；
+- `document.scrollWidth == clientWidth == 390`，`.m-content` 内**零个**横向溢出元素；
+- 桌面窗口控制按钮在紧凑态**从 DOM 卸载**（可交互元素 8 → 3），证明是 React 条件渲染生效而非仅 CSS 隐藏；
+- `tsc -b && vite build` 通过，oxlint 无错。
+
+**遗留给 M11 的已知问题**（本次实测看到，不属于 M8 范围）
+
+- 身份总览仍显示 Agent 维度与「一键加载 Agent」红色警告条、「新建身份」按钮——移动端要砍成两维只读；
+- 设置页仍有「工作空间与备份」「关于与更新（含应用内自更新）」等桌面项，需按平台隐藏。
 
 ---
 

@@ -304,6 +304,93 @@ body {
 }
 .content { flex: 1; overflow: auto; padding: 12px 14px 14px; }
 
+/* ===== 移动端外壳：顶部精简栏 + 内容区 + 底部 Tab =====
+   安全区用 env(safe-area-inset-*) 兜刘海与手势条，需要 index.html 里
+   viewport 带 viewport-fit=cover 才会生效。 */
+.m-shell {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+.m-topbar {
+  flex: 0 0 auto;
+  height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 12px 0;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--sidebar);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.m-topbar-title { color: #ffffff; font-weight: 650; font-size: 15px; letter-spacing: 0.02em; }
+.m-topbar-spacer { flex: 1; }
+.m-status {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--sidebar-text);
+}
+.m-status .led { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; }
+.m-status.on .led { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, 0.8); }
+.m-icon-btn {
+  /* 触摸目标 ≥44px，不要照搬桌面的 26px 图标按钮 */
+  width: 44px; height: 44px; flex: 0 0 44px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 10px; background: transparent;
+  color: var(--sidebar-text); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-icon-btn:active { background: var(--sidebar-hover); color: #ffffff; }
+
+.m-content {
+  flex: 1; min-height: 0; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: 12px 12px 16px;
+}
+
+.m-tabbar {
+  flex: 0 0 auto;
+  height: calc(56px + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  display: flex; align-items: stretch;
+  background: var(--sidebar);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.m-tab {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  color: var(--sidebar-text); text-decoration: none;
+  font-size: 10.5px; font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.12s ease;
+}
+.m-tab.active { color: var(--sidebar-text-active); font-weight: 650; }
+.m-tab.active svg { filter: drop-shadow(0 2px 6px rgba(99, 102, 241, 0.5)); }
+.m-tab:active { background: var(--sidebar-hover); }
+
+/* ===== 紧凑视口：把桌面写死的固定尺寸放开 =====
+   桌面窗口有 840px 最小宽度，正常不会命中这里；
+   命中的场景是手机、以及开发时把浏览器窗口拉窄做验收。 */
+@media (max-width: 640px) {
+  body { font-size: 13px; }
+
+  /* 桌面自绘标题栏与侧栏在移动端不渲染，这里兜底防止意外露出 */
+  .titlebar { display: none; }
+  .sidebar { display: none; }
+
+  .body { flex-direction: column; }
+  .main { min-width: 0; }
+  .content { padding: 12px 12px 16px; }
+
+  /* 触摸目标放大 */
+  .nav-item { padding: 10px 12px; font-size: 14px; }
+  .btn { padding: 9px 14px; font-size: 13.5px; }
+
+  /* 桌面常用的并排两栏在竖屏上一律堆叠 */
+  .row, .grid-2, .split { flex-direction: column; }
+
+  /* 长路径、指纹、公钥等等宽内容允许换行，不要撑出横向滚动 */
+  .path-clip, .tb-ws-path { max-width: 100%; }
+}
+
 .startup-lock-bar {
   display: flex; align-items: center; gap: 8px;
   margin: -4px 0 10px;

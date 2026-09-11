@@ -20,8 +20,17 @@ import { TotpPage } from "./pages/Totp";
 import { AccountsPage } from "./pages/Accounts";
 import { CloseConfirmHost } from "./ui/CloseConfirm";
 import UnlockAnimation from "./ui/UnlockAnimation";
+import { MobileShell } from "./ui/MobileShell";
+import { useIsCompact, supportsLocalGitTools } from "./lib/platform";
 
-function AppShell() {
+function AppShell({ compact }: { compact: boolean }) {
+  if (compact) {
+    return (
+      <MobileShell>
+        <Outlet />
+      </MobileShell>
+    );
+  }
   return (
     <Layout>
       <Outlet />
@@ -41,6 +50,11 @@ export default function App() {
     animPlayId,
     endUnlockAnim,
   } = useApp();
+
+  const compact = useIsCompact();
+  // 本机 Git / SSH 工具链相关页面在移动端没有消费者，连路由都不注册，
+  // 避免深链接或历史记录把用户带到一个必然报错的页面。
+  const localTools = supportsLocalGitTools();
 
   const unlockOverlay = playUnlockAnim ? (
     <UnlockAnimation
@@ -123,14 +137,14 @@ export default function App() {
     screen = (
       <HashRouter>
         <Routes>
-          <Route path="/identities/new" element={<NewIdentity />} />
-          <Route element={<AppShell />}>
+          {localTools && <Route path="/identities/new" element={<NewIdentity />} />}
+          <Route element={<AppShell compact={compact} />}>
             <Route path="/" element={<Overview />} />
             <Route path="/keys" element={<Keys />} />
-            <Route path="/config" element={<ConfigPage />} />
-            <Route path="/agent" element={<AgentPage />} />
-            <Route path="/repos" element={<Repos />} />
-            <Route path="/clone" element={<ClonePage />} />
+            {localTools && <Route path="/config" element={<ConfigPage />} />}
+            {localTools && <Route path="/agent" element={<AgentPage />} />}
+            {localTools && <Route path="/repos" element={<Repos />} />}
+            {localTools && <Route path="/clone" element={<ClonePage />} />}
             <Route path="/totp" element={<TotpPage />} />
             <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/sync" element={<SyncPage />} />
@@ -146,7 +160,8 @@ export default function App() {
     <>
       <CloseConfirmHost />
       <div className="app-shell">
-        <TitleBar />
+        {/* 移动端没有窗口控制，标题栏由 MobileShell 的精简顶栏代替 */}
+        {!compact && <TitleBar />}
         <div className="app-view">{screen}</div>
       </div>
       {unlockOverlay}

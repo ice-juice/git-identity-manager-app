@@ -3,7 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover 让 env(safe-area-inset-*) 生效；
+         禁用缩放避免移动端双击/双指把加密界面放大到错位。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
     <title>御钥师</title>
     <style>
       html, body, #root { height: 100%; margin: 0; background: #f3f6fa; }
