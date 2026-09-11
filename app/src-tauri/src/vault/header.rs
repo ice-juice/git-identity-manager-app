@@ -25,6 +25,11 @@ impl KdfParams {
     }
 
     /// 收敛到安全边界，防止头部被篡改成弱参数或非法参数。
+    ///
+    /// **上限必须保持 `MEM_CEIL_KIB`（512MiB），不能改成移动端安全上限。**
+    /// 这里 clamp 的结果直接参与 KEK 派生，一旦收紧，历史上用 256/512MiB
+    /// 创建的保险库会算出不同的 KEK，变成永久打不开。移动端的兼容性靠
+    /// `kdf::calibrate_with` 在**新建时**收口 + `Vault::relax_kdf` 主动降参解决。
     pub fn clamp_to_safe_bounds(&mut self) {
         self.mem_kib = self.mem_kib.clamp(MEM_FLOOR_KIB, MEM_CEIL_KIB);
         self.iters = self.iters.max(ITERS_FLOOR);

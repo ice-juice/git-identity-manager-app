@@ -311,6 +311,64 @@ pub fn change_password(
     Ok(())
 }
 
+/// 当前保险库的 KDF 参数与移动端兼容性。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KdfInfo {
+    pub mem_mib: u32,
+    pub iters: u32,
+    pub parallelism: u32,
+    /// 内存是否已收在移动端安全上限内（手机能否用访问密码解锁）。
+    pub mobile_compatible: bool,
+    pub mobile_ceiling_mib: u32,
+}
+
+fn kdf_info(p: &KdfParams) -> KdfInfo {
+    KdfInfo {
+        mem_mib: p.mem_kib / 1024,
+        iters: p.iters,
+        parallelism: p.parallelism,
+        mobile_compatible: p.mem_kib <= crate::vault::kdf::MEM_CEIL_MOBILE_SAFE_KIB,
+        mobile_ceiling_mib: crate::vault::kdf::MEM_CEIL_MOBILE_SAFE_KIB / 1024,
+    }
+}
+
+/// 查询当前 KDF 参数（设置页展示「手机能否接入」）。
+#[tauri::command]
+pub fn get_kdf_info(state: State<AppState>) -> Result<KdfInfo> {
+    let vault = recover_lock(&state.vault);
+    let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
+    Ok(kdf_info(v.kdf_params()))
+}
+
+/// 降低 KDF 参数以便手机接入（需正确访问密码）。
+///
+/// 只重新包裹密码信封，不重加密数据；完成后把头部推到云端，其它设备才拿得到新参数。
+/// 标定较慢，走 async 命令避免堵住 WebView。
+#[tauri::command(async)]
+pub fn relax_kdf_for_mobile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    password: String,
+) -> Result<KdfInfo> {
+    ensure_loaded(&state)?;
+    let target = crate::vault::kdf::calibrate_with(
+        DEFAULT_TARGET_MS,
+        crate::vault::kdf::KdfProfile::CrossDevice,
+    );
+    let mut vault = recover_lock(&state.vault);
+    let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
+    let changed = v.relax_kdf(&password, target)?;
+    let info = kdf_info(v.kdf_params());
+    drop(vault);
+    if changed.is_some() {
+        session::clear();
+        grant_grace_if_configured(&state);
+        crate::sync::scheduler::kick_publish(app);
+    }
+    Ok(info)
+}
+
 /// 轮换恢复密钥（需已解锁），返回新恢复密钥。
 #[tauri::command]
 pub fn rotate_recovery_key(app: AppHandle, state: State<AppState>) -> Result<InitResult> {

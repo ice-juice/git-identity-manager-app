@@ -118,6 +118,7 @@ impl Vault {
 
     /// 用访问密码解锁。
     pub fn unlock_with_password(&mut self, password: &str) -> Result<()> {
+        kdf::ensure_affordable(&self.header.kdf)?;
         let mk = envelope::unwrap_with_password(
             &self.header.envelopes.password,
             password,
@@ -137,8 +138,56 @@ impl Vault {
 
     /// 二次验证：校验访问密码是否正确（不改变解锁状态）。用于查看机密前的重认证。
     pub fn verify_password(&self, password: &str) -> Result<()> {
+        kdf::ensure_affordable(&self.header.kdf)?;
         envelope::unwrap_with_password(&self.header.envelopes.password, password, &self.header.kdf)
             .map(|_| ())
+    }
+
+    /// 当前 KDF 参数（供设置页展示与移动端兼容性判断）。
+    pub fn kdf_params(&self) -> &KdfParams {
+        &self.header.kdf
+    }
+
+    /// 降低 KDF 参数，让内存受限的设备（手机）也能用访问密码解锁。
+    ///
+    /// 只用新参数**重新包裹密码信封**（毫秒级），不触碰任何业务数据；
+    /// 恢复信封与生物识别信封都不依赖 KDF 参数，因此不受影响。
+    ///
+    /// 目标参数由调用方标定后传入（便于测试注入快参数，也避免这里再吃一次标定耗时）。
+    /// 返回 `None` 表示当前参数已不高于目标、无需改动。
+    ///
+    /// 注意：改完必须把头部推到云端，其它设备才拿得到新参数。
+    pub fn relax_kdf(&mut self, password: &str, target: KdfParams) -> Result<Option<KdfParams>> {
+        let mut target = target;
+        target.clamp_to_safe_bounds();
+        if target.mem_kib > kdf::MEM_CEIL_MOBILE_SAFE_KIB {
+            return Err(AppError::Invalid(format!(
+                "目标参数 {} MiB 仍高于移动端安全上限 {} MiB",
+                target.mem_kib / 1024,
+                kdf::MEM_CEIL_MOBILE_SAFE_KIB / 1024
+            )));
+        }
+        if self.header.kdf.mem_kib <= target.mem_kib {
+            return Ok(None);
+        }
+        // 用**旧**参数解开（本机是桌面，跑得动；护栏只挡解锁路径，不挡这里）。
+        let mk = envelope::unwrap_with_password(
+            &self.header.envelopes.password,
+            password,
+            &self.header.kdf,
+        )?;
+        let new_env = envelope::wrap_with_password(&mk, password, &target)?;
+
+        // 落盘失败要回滚内存中的头部，否则会出现"内存已换、磁盘还是旧的"的分叉。
+        let old_kdf = std::mem::replace(&mut self.header.kdf, target.clone());
+        let old_env = std::mem::replace(&mut self.header.envelopes.password, new_env);
+        if let Err(e) = self.persist_header() {
+            self.header.kdf = old_kdf;
+            self.header.envelopes.password = old_env;
+            return Err(e);
+        }
+        self.mk = Some(mk);
+        Ok(Some(target))
     }
 
     /// 锁定：清零 MK。
@@ -185,6 +234,8 @@ impl Vault {
         if new_password.is_empty() {
             return Err(AppError::Invalid("新密码不能为空".into()));
         }
+        // 用恢复密钥在手机上解锁后仍可能走到这里，而改密要跑一次 Argon2。
+        kdf::ensure_affordable(&self.header.kdf)?;
         // 用旧密码解出 MK（即便已解锁也强制校验旧密码，防越权改密）。
         let mk = envelope::unwrap_with_password(
             &self.header.envelopes.password,
@@ -348,6 +399,61 @@ mod tests {
         atomic_write(&path, b"newer").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"newer");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn relax_kdf_is_noop_when_already_light_enough() {
+        let root = temp_root();
+        let (mut v, _rec) = Vault::init(&root, "pw", fast_kdf()).unwrap();
+        // 目标与当前相同 → 无需改动。
+        let got = v.relax_kdf("pw", fast_kdf()).unwrap();
+        assert!(got.is_none(), "已经足够轻时不应重写头部");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn relax_kdf_rewraps_password_envelope_and_keeps_recovery() {
+        let root = temp_root();
+        // 造一个"偏重"的保险库（仍用测试级小参数，只要高于目标即可触发降参）。
+        let heavy = KdfParams::new(MEM_FLOOR_KIB * 2, ITERS_FLOOR, 1);
+        let (_v, recovery) = Vault::init(&root, "pw", heavy.clone()).unwrap();
+
+        let mut v = Vault::load(&root).unwrap();
+        assert_eq!(v.kdf_params().mem_kib, heavy.mem_kib);
+
+        let target = fast_kdf();
+        let applied = v.relax_kdf("pw", target.clone()).unwrap().expect("应发生降参");
+        assert_eq!(applied.mem_kib, target.mem_kib);
+        assert_eq!(v.kdf_params().mem_kib, target.mem_kib);
+        assert!(v.is_unlocked(), "降参后应保持解锁态");
+
+        // 重开：新参数已落盘，旧密码仍能解锁。
+        let mut reopened = Vault::load(&root).unwrap();
+        assert_eq!(reopened.kdf_params().mem_kib, target.mem_kib);
+        reopened.unlock_with_password("pw").unwrap();
+
+        // 恢复信封不依赖 KDF 参数，降参不得影响它。
+        let mut by_recovery = Vault::load(&root).unwrap();
+        by_recovery.unlock_with_recovery(&recovery).unwrap();
+        assert!(by_recovery.is_unlocked());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn relax_kdf_rejects_wrong_password_and_too_heavy_target() {
+        let root = temp_root();
+        let heavy = KdfParams::new(MEM_FLOOR_KIB * 2, ITERS_FLOOR, 1);
+        let _ = Vault::init(&root, "pw", heavy).unwrap();
+        let mut v = Vault::load(&root).unwrap();
+
+        assert_eq!(
+            v.relax_kdf("wrong", fast_kdf()).unwrap_err().code(),
+            "BAD_PASSWORD"
+        );
+        // 目标本身还超出移动端上限 → 拒绝，免得白降一场仍打不开。
+        let still_heavy = KdfParams::new(crate::vault::kdf::MEM_CEIL_KIB, ITERS_FLOOR, 1);
+        assert_eq!(v.relax_kdf("pw", still_heavy).unwrap_err().code(), "INVALID");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

@@ -40,6 +40,14 @@ export interface PathCheck {
   warning: string | null;
   error: string | null;
 }
+export interface KdfInfo {
+  memMib: number;
+  iters: number;
+  parallelism: number;
+  /** 内存是否已收在移动端安全上限内，即手机能否用访问密码解锁。 */
+  mobileCompatible: boolean;
+  mobileCeilingMib: number;
+}
 export interface KeyInfo {
   algorithm: string;
   fingerprint: string;
@@ -424,6 +432,8 @@ export const api = {
   changePassword: (oldPassword: string, newPassword: string) =>
     invoke<void>("change_password", { oldPassword, newPassword }),
   rotateRecoveryKey: () => invoke<InitResult>("rotate_recovery_key"),
+  getKdfInfo: () => invoke<KdfInfo>("get_kdf_info"),
+  relaxKdfForMobile: (password: string) => invoke<KdfInfo>("relax_kdf_for_mobile", { password }),
   vaultTryGraceUnlock: () => invoke<boolean>("vault_try_grace_unlock"),
   setLaunchAtLogin: (enabled: boolean) => invoke<void>("set_launch_at_login", { enabled }),
   setGraceDays: (days: number) => invoke<void>("set_grace_days", { days }),

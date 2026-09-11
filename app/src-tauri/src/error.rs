@@ -21,6 +21,13 @@ pub enum AppError {
     BiometricStale,
     #[error("加密/解密失败")]
     Crypto,
+    /// 这个保险库的 Argon2 参数超出本机安全上限。硬跑会被系统杀进程（移动端表现为闪退），
+    /// 所以提前拒绝并给出出路。
+    #[error(
+        "解锁这个保险库需要约 {needed_mib} MiB 内存，超过本机安全上限 {ceiling_mib} MiB。\
+         请在桌面端用「降低 KDF 参数以便手机接入」处理后重试，或改用恢复密钥解锁。"
+    )]
+    KdfTooHeavy { needed_mib: u32, ceiling_mib: u32 },
     #[error("解锁尝试过于频繁，请稍候再试")]
     RateLimited,
     #[error("IO 错误：{0}")]
@@ -52,6 +59,7 @@ impl AppError {
             AppError::BiometricCancelled => "BIOMETRIC_CANCELLED",
             AppError::BiometricStale => "BIOMETRIC_STALE",
             AppError::Crypto => "CRYPTO",
+            AppError::KdfTooHeavy { .. } => "KDF_TOO_HEAVY",
             AppError::RateLimited => "RATE_LIMITED",
             AppError::Io(_) => "IO",
             AppError::Serde(_) => "SERDE",

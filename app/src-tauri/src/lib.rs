@@ -83,6 +83,8 @@ pub fn run() {
             commands::vault::vault_unlock_biometric,
             commands::vault::vault_lock,
             commands::vault::change_password,
+            commands::vault::get_kdf_info,
+            commands::vault::relax_kdf_for_mobile,
             commands::vault::rotate_recovery_key,
             commands::vault::vault_try_grace_unlock,
             commands::vault::set_launch_at_login,

@@ -408,6 +408,7 @@ iOS 还需在 Info.plist 补 `NSFaceIDUsageDescription`，否则调用即崩。
 **任务**
 
 1. **D2 落地**：新增 `MEM_CEIL_MOBILE_SAFE_KIB`；标定加「跨设备兼容」模式；移动端密码解锁挪到后台线程 + 超阈值拒绝 + UI 耗时预告；桌面设置页加「降低 KDF 参数以便手机接入」。
+   **→ 纯 Rust 部分已完成（见下方 M9a）；剩余 UI 耗时预告归 M11、后台线程归 M9 主体。**
 2. 恢复密钥解锁在移动端打通（HKDF 路径，最先能用）。
 3. **`biometric/android.rs` + Kotlin 插件**：Keystore HMAC + BiometricPrompt，实现 `availability / enroll / derive / verify_presence / remove` 五个函数（D3）。
 4. 路线 A 重认证接官方 `tauri-plugin-biometric`。
@@ -417,6 +418,26 @@ iOS 还需在 Info.plist 补 `NSFaceIDUsageDescription`，否则调用即崩。
 **交付物**：手机上可用恢复密钥 + 生物识别解锁并锁定。
 
 **验收**：① 128MiB 参数保险库在 4GB 内存真机上解锁不 OOM；② 512MiB 参数保险库给出**可理解的拒绝提示而非闪退**；③ 系统里新增一枚指纹后，App 正确进入 `stale` 状态并要求改用密码/恢复密钥重新启用；④ App 切后台再回来必须重新验证；⑤ 任务切换器里看不到内容；⑥ 复制 TOTP 后系统预览气泡不显示明文。
+
+#### M9a · D2 纯 Rust 部分 ✅ 已完成
+
+不依赖 Android SDK，`cargo test` 可验收。
+
+| 位置 | 改动 |
+| --- | --- |
+| `vault/kdf.rs` | `MEM_CEIL_MOBILE_SAFE_KIB = 128MiB`；`KdfProfile{CrossDevice,DesktopOnly}`；`local_mem_ceiling_kib()`（按 `cfg(mobile)` 取值）；`ensure_affordable()`；`calibrate_with(target, profile)`，`calibrate()` 默认走 `CrossDevice` |
+| `error.rs` | `KdfTooHeavy{needed_mib,ceiling_mib}` → code `KDF_TOO_HEAVY`，文案直接给出"桌面端降参"或"恢复密钥"两条出路 |
+| `vault/mod.rs` | `unlock_with_password` / `verify_password` / `change_password` 前置 `ensure_affordable`；新增 `kdf_params()` 与 `relax_kdf(password, target)` |
+| `commands/vault.rs` | `get_kdf_info`（含 `mobileCompatible`）、`relax_kdf_for_mobile`（标定 → 降参 → `kick_publish`） |
+| `lib.rs` / `ipc.ts` | 注册两个命令 + 前端 `KdfInfo` 类型与调用封装 |
+
+三个关键设计取舍：
+
+- **`clamp_to_safe_bounds()` 的 512MiB 上限不动。** 它 clamp 后的值直接参与 KEK 派生，收紧上限会让历史重参数保险库算出不同 KEK、**永久打不开**。已加回归测试 `clamp_preserves_legacy_heavy_params` 锁死这一点。兼容性改从两头解决：新建时 `CrossDevice` 标定收口，老库靠 `relax_kdf` 主动降参。
+- **`relax_kdf` 只重新包裹密码信封**，毫秒级，不重加密任何业务数据；恢复信封（HKDF）与生物识别信封都不依赖 KDF 参数，因此不受影响（测试已断言降参后恢复密钥仍可解锁）。目标参数由调用方传入而非内部标定，便于测试注入快参数。落盘失败会回滚内存头部，避免"内存已换、磁盘还是旧的"分叉。
+- **护栏不加在 `unlock_with_recovery`**：HKDF 路径本来就便宜，这也正是超限保险库在手机上的逃生通道。
+
+**已验收**：`cargo test` 245 passed / 0 failed，含 7 个新增用例（上限关系、跨设备标定不越界、护栏边界值放行/超限拒绝、历史参数 clamp 不变、降参幂等、降参后密码与恢复密钥双路可解锁、错误密码与仍超限目标被拒）。
 
 ---
 
