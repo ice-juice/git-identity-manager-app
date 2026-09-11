@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errMessage, type AgentStatus, type AgentUnifyReport } from "../lib/ipc";
+import { loadAgentStatus, peekAgentStatus } from "../lib/agentCache";
 import { PageHead, Card, Empty, Badge } from "../ui/common";
 import { EnvUnifyDialog } from "../ui/EnvUnifyDialog";
 
@@ -11,19 +12,19 @@ function guessHostOs(): string {
 }
 
 export function AgentPage() {
-  const [status, setStatus] = useState<AgentStatus | null>(null);
+  const [status, setStatus] = useState<AgentStatus | null>(() => peekAgentStatus());
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  const [scanning, setScanning] = useState(true);
+  const [scanning, setScanning] = useState(() => !peekAgentStatus());
   const [report, setReport] = useState<AgentUnifyReport | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  async function detect() {
+  async function detect(force = true) {
     setErr("");
-    setScanning(true);
+    if (force || !peekAgentStatus()) setScanning(true);
     try {
-      setStatus(await api.agentStatus());
+      setStatus(await loadAgentStatus(force));
     } catch (e) {
       setErr(errMessage(e));
     } finally {
@@ -32,7 +33,8 @@ export function AgentPage() {
   }
 
   useEffect(() => {
-    detect();
+    if (peekAgentStatus()) return;
+    void detect(false);
   }, []);
 
   async function run(fn: () => Promise<unknown>, ok: string) {
@@ -60,7 +62,7 @@ export function AgentPage() {
   return (
     <div className="stack-lg">
       <PageHead
-        title="Agent 管理"
+        title="Agent托管"
         desc={
           isWindows
             ? "检测本机是否已用同一套 Git 自带 ssh-agent；密钥加载情况与终端、git 是否对齐都会列在下面。"
@@ -68,7 +70,7 @@ export function AgentPage() {
         }
         actions={
           <>
-            <button className="btn" disabled={busy || scanning} onClick={() => detect()}>
+            <button className="btn" disabled={busy || scanning} onClick={() => detect(true)}>
               {scanning ? "检测中…" : "重新检测"}
             </button>
             <button className="btn" disabled={busy} onClick={() => run(() => api.agentEnsure(), "已确保 Git ssh-agent 运行")}>

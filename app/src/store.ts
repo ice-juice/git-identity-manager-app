@@ -8,6 +8,7 @@ import {
   setUnlockAnimStyleStored,
   type UnlockAnimStyle,
 } from "./lib/prefs";
+import { forgetAgentStatus } from "./lib/agentCache";
 
 interface AppStore {
   status: VaultStatus | null;
@@ -88,6 +89,7 @@ export const useApp = create<AppStore>((set, get) => ({
   },
   lock: async () => {
     await api.vaultLock();
+    forgetAgentStatus();
     const status = await api.vaultStatus();
     set({ status, writesLocked: false, startupNote: "", playUnlockAnim: false });
   },

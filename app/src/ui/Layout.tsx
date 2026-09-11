@@ -46,7 +46,7 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: "/", label: "身份总览", icon: LayoutDashboard, end: true, badge: idCount },
     { to: "/keys", label: "密钥管理", icon: KeyRound, badge: keyCount },
     { to: "/config", label: "SSH 配置 / 编辑", icon: FileCog },
-    { to: "/agent", label: "Agent", icon: Cpu },
+    { to: "/agent", label: "Agent托管", icon: Cpu },
     { to: "/repos", label: "仓库管理", icon: FolderGit2, badge: repoCount },
     { to: "/clone", label: "克隆仓库", icon: Download },
     { to: "/totp", label: "2FA / TOTP", icon: Timer },

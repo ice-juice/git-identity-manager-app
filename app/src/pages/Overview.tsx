@@ -22,6 +22,7 @@ import {
   type AuthResult,
   type UpdateIdentityArgs,
 } from "../lib/ipc";
+import { loadAgentStatus } from "../lib/agentCache";
 import { PageHead, Empty, Badge } from "../ui/common";
 import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
@@ -82,7 +83,7 @@ export function Overview() {
       const [ids, ks, ag, cfg] = await Promise.all([
         api.listIdentities(),
         api.listKeys(),
-        api.agentStatus().catch(() => null),
+        loadAgentStatus().catch(() => null),
         api.readSshConfig().catch(() => null),
       ]);
       setIdentities(ids);
@@ -160,7 +161,7 @@ export function Overview() {
       // 重新确保 agent 与获取最新配置
       await api.agentEnsure().catch(() => null);
       const [ag, cfg] = await Promise.all([
-        api.agentStatus().catch(() => null),
+        loadAgentStatus(true).catch(() => null),
         api.readSshConfig().catch(() => null),
       ]);
       setAgentStatus(ag);
@@ -211,7 +212,7 @@ export function Overview() {
       setErr("");
       await api.agentEnsure();
       await api.agentLoadIdentity(identityId);
-      const ag = await api.agentStatus();
+      const ag = await loadAgentStatus(true);
       setAgentStatus(ag);
     } catch (e) {
       setErr(errMessage(e));

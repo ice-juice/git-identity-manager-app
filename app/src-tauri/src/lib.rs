@@ -27,6 +27,7 @@ pub mod tray;
 pub mod update;
 pub mod util;
 pub mod vault;
+pub mod workspace_path;
 
 use commands::AppState;
 use std::sync::atomic::Ordering;

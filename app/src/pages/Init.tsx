@@ -5,6 +5,7 @@ import { api, errMessage, type CloudRestorePreview, type S3Config } from "../lib
 import { writeClipboard } from "../lib/clipboard";
 import { useApp } from "../store";
 import { APP_LANG } from "../lib/config";
+import { S3SetupGuide, S3GuideButton, type S3GuideProvider } from "../ui/S3SetupGuide";
 
 const CREATE_STEPS = ["选择工作空间", "设置访问密码", "保存恢复密钥", "回填校验", "完成"];
 const RESTORE_STEPS = ["选择工作空间", "云存储", "恢复密钥", "新访问密码", "完成"];
@@ -47,6 +48,8 @@ export function InitWizard() {
   const [preview, setPreview] = useState<CloudRestorePreview | null>(null);
   const [restoreResult, setRestoreResult] = useState<string | null>(null);
   const [includeRepos, setIncludeRepos] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [guideTab, setGuideTab] = useState<S3GuideProvider>("r2");
 
   const steps = mode === "restore" ? RESTORE_STEPS : CREATE_STEPS;
   const strength = pwStrength(pw);
@@ -82,6 +85,7 @@ export function InitWizard() {
       setPath(selected);
       const r = await api.checkWorkspacePath(selected);
       setWarning(r.warning);
+      if (r.error) setErr(r.error);
     } catch (e) {
       setErr(errMessage(e));
     }
@@ -93,6 +97,7 @@ export function InitWizard() {
     try {
       const r = await api.checkWorkspacePath(path);
       setWarning(r.warning);
+      if (r.error) return setErr(r.error);
       setStep(1);
     } catch (e) {
       setErr(errMessage(e));
@@ -135,6 +140,17 @@ export function InitWizard() {
 
   function s3Ready(): boolean {
     return !!(s3.endpoint.trim() && s3.bucket.trim() && s3.accessKeyId.trim() && s3.secretAccessKey.trim());
+  }
+
+  function applyGuidePreset(type: "r2" | "s3" | "minio") {
+    setGuideTab(type);
+    if (type === "r2") {
+      setS3((p) => ({ ...p, endpoint: "https://<account_id>.r2.cloudflarestorage.com", region: "auto", prefix: p.prefix || "gam-sync/" }));
+    } else if (type === "s3") {
+      setS3((p) => ({ ...p, endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", prefix: p.prefix || "gam-sync/" }));
+    } else {
+      setS3((p) => ({ ...p, endpoint: "http://127.0.0.1:9000", region: "us-east-1", prefix: p.prefix || "gam-sync/" }));
+    }
   }
 
   async function testS3() {
@@ -409,7 +425,7 @@ export function InitWizard() {
                         浏览…
                       </button>
                     </div>
-                    <div className="hint">建议选择不被 OneDrive / 坚果云等第三方同步盘接管的本地独立目录。</div>
+                    <div className="hint">请用本地独立目录，尽量只含英文、数字和连字符，例如 D:\git-keymaster-ws。不要放进 OneDrive / 坚果云，也不要用空格或中文路径（Git / OpenSSH 容易出错）。</div>
                   </div>
                   {warning && <div className="callout warn">⚠️ {warning}</div>}
                 </div>
@@ -470,15 +486,19 @@ export function InitWizard() {
 
               {mode === "restore" && step === 1 && (
                 <div className="stack" style={{ gap: 10 }}>
+                  <div className="callout info sm">
+                    填写必须和旧设备完全一样。还没有这些信息？点「小白引导」按步骤到云控制台建桶、拿密钥。
+                  </div>
                   <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                    <S3GuideButton onClick={() => setGuideOpen(true)} />
                     <span className="muted" style={{ fontSize: 11, alignSelf: "center" }}>快速预设</span>
-                    <button type="button" className="btn ghost sm" onClick={() => setS3((p) => ({ ...p, endpoint: "https://<account_id>.r2.cloudflarestorage.com", region: "auto", prefix: p.prefix || "gam-sync/" }))}>
+                    <button type="button" className="btn ghost sm" onClick={() => { setGuideTab("r2"); setS3((p) => ({ ...p, endpoint: "https://<account_id>.r2.cloudflarestorage.com", region: "auto", prefix: p.prefix || "gam-sync/" })); }}>
                       Cloudflare R2
                     </button>
-                    <button type="button" className="btn ghost sm" onClick={() => setS3((p) => ({ ...p, endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", prefix: p.prefix || "gam-sync/" }))}>
+                    <button type="button" className="btn ghost sm" onClick={() => { setGuideTab("s3"); setS3((p) => ({ ...p, endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", prefix: p.prefix || "gam-sync/" })); }}>
                       AWS S3
                     </button>
-                    <button type="button" className="btn ghost sm" onClick={() => setS3((p) => ({ ...p, endpoint: "http://127.0.0.1:9000", region: "us-east-1", prefix: p.prefix || "gam-sync/" }))}>
+                    <button type="button" className="btn ghost sm" onClick={() => { setGuideTab("minio"); setS3((p) => ({ ...p, endpoint: "http://127.0.0.1:9000", region: "us-east-1", prefix: p.prefix || "gam-sync/" })); }}>
                       MinIO
                     </button>
                   </div>
@@ -688,6 +708,12 @@ export function InitWizard() {
           </div>
         </main>
       </div>
+      <S3SetupGuide
+        open={guideOpen}
+        initial={guideTab}
+        onClose={() => setGuideOpen(false)}
+        onApplyPreset={applyGuidePreset}
+      />
     </div>
   );
 }

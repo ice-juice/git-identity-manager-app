@@ -192,7 +192,7 @@ GitHub Release 里中英文成对出现。文件名都以 `Git.Keymaster_` 开�
 
 ### Windows
 
-1. 运行 `Git.Keymaster_*_x64_zh-CN-setup.exe`（或 MSI）。
+1. 运行 `Git.Keymaster_*_x64_zh-CN-setup.exe`（或 MSI）。NSIS 向导默认装到 `%LOCALAPPDATA%\GitKeymaster`，开始菜单和窗口标题仍是「御钥师」。
 2. 首次启动选择或创建工作空间，记下 **恢复密钥**。
 3. 需要指纹时：先在 Windows 设置里登记 Hello，再在御钥师「设置 → 安全」用访问密码开启指纹解锁。
 4. 本机需有 OpenSSH 客户端（Windows 可选功能或 Git for Windows）。

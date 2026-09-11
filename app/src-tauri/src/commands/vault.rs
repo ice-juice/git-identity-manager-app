@@ -39,12 +39,7 @@ pub struct InitResult {
     pub workspace_id: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PathCheck {
-    /// 命中同步盘时的中文告警，None 表示安全。
-    pub warning: Option<String>,
-}
+pub use crate::workspace_path::PathCheck;
 
 /// 查询当前状态（前端启动时首先调用）。
 #[tauri::command]
@@ -85,32 +80,10 @@ pub fn vault_status(state: State<AppState>) -> VaultStatus {
     }
 }
 
-/// 检测路径是否位于常见同步盘目录下（应避免）。
+/// 检测工作空间路径：非法字符拒绝；空格 / 非 ASCII / 同步盘只警告。
 #[tauri::command]
 pub fn check_workspace_path(path: String) -> PathCheck {
-    let lower = path.to_lowercase();
-    let hits = [
-        ("onedrive", "OneDrive"),
-        ("dropbox", "Dropbox"),
-        ("google drive", "Google Drive"),
-        ("googledrive", "Google Drive"),
-        ("icloud", "iCloud"),
-        ("坚果云", "坚果云"),
-        ("nutstore", "坚果云"),
-        ("百度网盘", "百度网盘"),
-        ("baidunetdisk", "百度网盘"),
-    ];
-    for (needle, label) in hits {
-        if lower.contains(needle) {
-            return PathCheck {
-                warning: Some(format!(
-                    "该路径疑似位于「{}」同步盘内。端到端加密备份应走应用内的云同步通道，请勿让第三方同步盘接管整个工作空间目录。",
-                    label
-                )),
-            };
-        }
-    }
-    PathCheck { warning: None }
+    crate::workspace_path::inspect(&path)
 }
 
 /// 初始化工作空间。会做 Argon2id 运行时标定（略慢，属正常）。
@@ -120,6 +93,7 @@ pub fn vault_init(
     path: String,
     password: String,
 ) -> Result<InitResult> {
+    crate::workspace_path::reject_if_invalid(&path)?;
     let root = PathBuf::from(&path);
     let kdf: KdfParams = calibrate(DEFAULT_TARGET_MS);
     let (vault, recovery_key) = Vault::init(&root, &password, kdf)?;

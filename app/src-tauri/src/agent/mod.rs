@@ -229,9 +229,13 @@ fn apply_agent_env(cmd: &mut std::process::Command, env: &AgentEnv) {
     }
 }
 
+/// 列表探测超时宜短：死套接字不该把整页卡住数秒。加载/卸载仍用更长超时。
+const SSH_ADD_LIST_TIMEOUT: Duration = Duration::from_secs(2);
+const SSH_ADD_MUTATE_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// 运行 `ssh-add -l`。exit code 2 通常表示 agent 未运行。
 pub fn list(env: &AgentEnv) -> Result<Vec<AgentKey>> {
-    let (out, _err, code) = run_ssh_add(env, &["-l"], None)?;
+    let (out, _err, code) = run_ssh_add(env, &["-l"], None, SSH_ADD_LIST_TIMEOUT)?;
     if code == 2 {
         return Err(AppError::Other("ssh-agent 未运行".into()));
     }
@@ -245,7 +249,7 @@ pub fn load_key(v: &Vault, env: &AgentEnv, key_id: &str) -> Result<()> {
     let secrets = store::load_secrets(v)?;
     let passphrase = secrets.key_passphrases.get(key_id).map(|s| s.as_str());
     let plain = key::decrypt_to_openssh(&enc_text, passphrase)?;
-    let (_o, e, code) = run_ssh_add(env, &["-"], Some(plain.as_bytes()))?;
+    let (_o, e, code) = run_ssh_add(env, &["-"], Some(plain.as_bytes()), SSH_ADD_MUTATE_TIMEOUT)?;
     if code != 0 {
         let hint = e.trim();
         if is_agent_unreachable(hint) {
@@ -268,7 +272,7 @@ pub fn load_key(v: &Vault, env: &AgentEnv, key_id: &str) -> Result<()> {
 pub fn unload_public(env: &AgentEnv, public_openssh: &str) -> Result<()> {
     let tmp = std::env::temp_dir().join(format!("gam-pub-{}.pub", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, format!("{}\n", public_openssh.trim()))?;
-    let res = run_ssh_add(env, &["-d", &tmp.display().to_string()], None);
+    let res = run_ssh_add(env, &["-d", &tmp.display().to_string()], None, SSH_ADD_MUTATE_TIMEOUT);
     let _ = std::fs::remove_file(&tmp);
     let (_o, e, code) = res?;
     if code != 0 {
@@ -279,7 +283,7 @@ pub fn unload_public(env: &AgentEnv, public_openssh: &str) -> Result<()> {
 
 /// 清空 agent 全部 key（`ssh-add -D`）。
 pub fn clear(env: &AgentEnv) -> Result<()> {
-    let (_o, e, code) = run_ssh_add(env, &["-D"], None)?;
+    let (_o, e, code) = run_ssh_add(env, &["-D"], None, SSH_ADD_MUTATE_TIMEOUT)?;
     if code != 0 {
         return Err(AppError::Other(format!("ssh-add -D 失败：{e}")));
     }
@@ -587,7 +591,12 @@ fn list_ssh_agent_winpids() -> Vec<u32> {
     }
 }
 
-fn run_ssh_add(env: &AgentEnv, args: &[&str], stdin: Option<&[u8]>) -> Result<(String, String, i32)> {
+fn run_ssh_add(
+    env: &AgentEnv,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<(String, String, i32)> {
     use std::process::{Command, Stdio};
     let exe = resolve_ssh_add(env);
     let mut cmd = Command::new(&exe);
@@ -605,7 +614,7 @@ fn run_ssh_add(env: &AgentEnv, args: &[&str], stdin: Option<&[u8]>) -> Result<(S
         use std::io::Write;
         si.write_all(data).map_err(|e| AppError::Io(e.to_string()))?;
     }
-    sys::wait_output_timeout(child, Duration::from_secs(8), "ssh-add")
+    sys::wait_output_timeout(child, timeout, "ssh-add")
 }
 
 /// 启动 Git 自带 ssh-agent，并绑到 `~/.ssh/agent/git-keymaster`。

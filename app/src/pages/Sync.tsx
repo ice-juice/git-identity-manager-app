@@ -25,7 +25,8 @@ import {
   type AutoSyncSettings,
   type CloudSnapshot,
 } from "../lib/ipc";
-import { PageHead, Card, Badge } from "../ui/common";
+import { PageHead, Card, Badge, FieldLabel } from "../ui/common";
+import { S3SetupGuide, S3GuideButton, type S3GuideProvider } from "../ui/S3SetupGuide";
 import { useApp } from "../store";
 
 const AUTO_PRESETS: { label: string; minutes: number }[] = [
@@ -62,6 +63,8 @@ export function SyncPage() {
   const [snapshots, setSnapshots] = useState<CloudSnapshot[]>([]);
   const [loadingSnaps, setLoadingSnaps] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [guideTab, setGuideTab] = useState<S3GuideProvider>("r2");
 
   // 本地离线备份导出
   const [exportPw, setExportPw] = useState("");
@@ -147,6 +150,7 @@ export function SyncPage() {
 
   // 快捷预设
   function applyPreset(type: "r2" | "s3" | "minio") {
+    setGuideTab(type);
     if (type === "r2") {
       setS3Config((prev) => ({
         ...prev,
@@ -627,9 +631,16 @@ export function SyncPage() {
               </div>
             }
           >
+            <div className="callout info sm" style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <span>还没有云存储账号？按「小白引导」一步步建桶、拿两把钥匙，再填回本页。新手推荐 Cloudflare R2。</span>
+              <S3GuideButton onClick={() => setGuideOpen(true)} />
+            </div>
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
-                <label className="field-label">存储端点 (Endpoint)</label>
+                <FieldLabel
+                  name="存储端点 (Endpoint)"
+                  tip="云厂商给你的 S3 接口地址，必须带 https:// 或 http://。R2 形如 https://账户ID.r2.cloudflarestorage.com；AWS 形如 https://s3.ap-southeast-1.amazonaws.com。不要填控制台网页地址。"
+                />
                 <input
                   className="input mono"
                   placeholder="https://<account_id>.r2.cloudflarestorage.com"
@@ -638,7 +649,10 @@ export function SyncPage() {
                 />
               </div>
               <div>
-                <label className="field-label">存储桶名称 (Bucket)</label>
+                <FieldLabel
+                  name="存储桶名称 (Bucket)"
+                  tip="就是你在云控制台创建的那个储物柜名字，必须完全一致。只能用小写字母、数字和连字符。不要把桶设成公开。"
+                />
                 <input
                   className="input mono"
                   placeholder="my-git-vault-backup"
@@ -647,7 +661,10 @@ export function SyncPage() {
                 />
               </div>
               <div>
-                <label className="field-label">区域 (Region)</label>
+                <FieldLabel
+                  name="区域 (Region)"
+                  tip="R2 填 auto。AWS 必须和创建桶时选的区域一致，例如 ap-southeast-1。MinIO 一般填 us-east-1。"
+                />
                 <input
                   className="input mono"
                   placeholder="auto 或 us-east-1"
@@ -656,7 +673,10 @@ export function SyncPage() {
                 />
               </div>
               <div>
-                <label className="field-label">路径前缀 (Prefix)</label>
+                <FieldLabel
+                  name="路径前缀 (Prefix)"
+                  tip="桶里面的文件夹名，用来和其他文件分开。默认 gam-sync/ 即可。换电脑恢复时必须和旧设备填得一模一样。"
+                />
                 <input
                   className="input mono"
                   placeholder="gam-sync/"
@@ -665,7 +685,10 @@ export function SyncPage() {
                 />
               </div>
               <div>
-                <label className="field-label">Access Key ID</label>
+                <FieldLabel
+                  name="Access Key ID"
+                  tip="云厂商发给你的访问钥匙，不是登录邮箱。R2 在「管理 API 令牌」创建后可见；AWS 在 IAM 用户的访问密钥里，多半以 AKIA 开头。"
+                />
                 <input
                   className="input mono"
                   placeholder="AKIA..."
@@ -674,7 +697,10 @@ export function SyncPage() {
                 />
               </div>
               <div>
-                <label className="field-label">Secret Access Key</label>
+                <FieldLabel
+                  name="Secret Access Key"
+                  tip="和 Access Key 成对的密码。创建时只显示一次，关掉页面就再也看不到，请先复制保存。不要发到聊天或邮件。"
+                />
                 <div style={{ position: "relative" }}>
                   <input
                     type={showSecret ? "text" : "password"}
@@ -836,6 +862,12 @@ export function SyncPage() {
               <strong>零知识端到端加密：</strong>所有资产均在本地通过 XChaCha20-Poly1305 加密后上传，云端文件名经 HMAC 散列混淆，服务商及任何第三方均无法解密。
             </div>
           </div>
+          <S3SetupGuide
+            open={guideOpen}
+            initial={guideTab}
+            onClose={() => setGuideOpen(false)}
+            onApplyPreset={applyPreset}
+          />
         </>
       )}
 

@@ -44,7 +44,8 @@
     },
     "windows": {
       "nsis": {
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "template": "windows/installer.nsi"
       }
     },
     "android": {

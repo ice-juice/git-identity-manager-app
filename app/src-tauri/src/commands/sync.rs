@@ -455,9 +455,7 @@ pub fn restore_from_cloud(
     include_repos: Option<bool>,
 ) -> Result<SyncResult> {
     validate_s3_config(&sync_config)?;
-    if path.trim().is_empty() {
-        return Err(AppError::Invalid("请选择工作空间目录".into()));
-    }
+    crate::workspace_path::reject_if_invalid(&path)?;
     if password.len() < 8 {
         return Err(AppError::Invalid("访问密码至少 8 位".into()));
     }

@@ -38,6 +38,7 @@ export interface InitResult {
 }
 export interface PathCheck {
   warning: string | null;
+  error: string | null;
 }
 export interface KeyInfo {
   algorithm: string;

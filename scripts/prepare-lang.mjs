@@ -21,8 +21,9 @@ const tauriConfPath = path.join(rootDir, "app", "src-tauri", "tauri.conf.json");
 const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf-8"));
 
 // 安装包文件名由 rename-release-assets.mjs 统一成 ASCII 的 Git.Keymaster_*。
-// productName 才是桌面快捷方式、开始菜单、macOS Dock / 程序坞上的显示名。
-tauriConf.mainBinaryName = "git-account-manager";
+// productName 仍是桌面快捷方式、开始菜单、卸载项上的显示名（中文包为御钥师）。
+// Windows 默认安装目录由 windows/installer.nsi 固定为 GitKeymaster，与显示名拆开。
+tauriConf.mainBinaryName = "git-keymaster";
 const displayName = lang === "en" ? "Git Keymaster" : "御钥师";
 tauriConf.productName = displayName;
 if (tauriConf.app && tauriConf.app.windows && tauriConf.app.windows[0]) {
@@ -33,7 +34,8 @@ const infoPlistPath = path.join(rootDir, "app", "src-tauri", "Info.plist");
 if (fs.existsSync(infoPlistPath)) {
   let plist = fs.readFileSync(infoPlistPath, "utf-8");
   plist = upsertPlistString(plist, "CFBundleDisplayName", displayName);
-  plist = upsertPlistString(plist, "CFBundleName", displayName);
+  // 程序坞显示用 DisplayName；短名保持 ASCII，避免部分工具按文件夹名解析失败。
+  plist = upsertPlistString(plist, "CFBundleName", "GitKeymaster");
   fs.writeFileSync(infoPlistPath, plist, "utf-8");
 }
 
@@ -44,6 +46,7 @@ tauriConf.bundle.windows.nsis = {
   ...(tauriConf.bundle.windows.nsis || {}),
   displayLanguageSelector: false,
   languages: [lang === "en" ? "English" : "SimpChinese"],
+  template: "windows/installer.nsi",
 };
 tauriConf.bundle.windows.wix = {
   ...(tauriConf.bundle.windows.wix || {}),

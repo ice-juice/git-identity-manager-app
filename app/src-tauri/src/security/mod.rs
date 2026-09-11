@@ -79,9 +79,9 @@ fn now_iso8601() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
-/// 直接复用 `commands::vault::check_workspace_path` 的关键词表，不另起一套。
+/// 直接复用工作空间路径规则里的同步盘关键词，不另起一套。
 pub fn workspace_sync_warning(path: &str) -> Option<String> {
-    crate::commands::vault::check_workspace_path(path.to_string()).warning
+    crate::workspace_path::sync_drive_warning(path)
 }
 
 pub fn build_checklist(cfg: &AppConfig) -> SecurityChecklist {

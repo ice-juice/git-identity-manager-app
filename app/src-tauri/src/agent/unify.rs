@@ -213,7 +213,13 @@ fn git_bin_dir(ssh: &str) -> Option<PathBuf> {
 }
 
 fn current_core_ssh_command() -> Option<String> {
-    let (out, _, code) = sys::run_git(&["config", "--global", "--get", "core.sshCommand"]).ok()?;
+    let exe = crate::sys::git_exe().ok()?;
+    let (out, _, code) = crate::sys::run_timeout(
+        &exe,
+        &["config", "--global", "--get", "core.sshCommand"],
+        std::time::Duration::from_secs(3),
+    )
+    .ok()?;
     if code == 0 && !out.trim().is_empty() {
         Some(out.trim().to_string())
     } else {
@@ -391,7 +397,12 @@ fn env_check(
 }
 
 /// 检查当前用户环境是否已对齐到这套 Git agent。
-pub fn inspect(env: &AgentEnv) -> AgentUnifyStatus {
+///
+/// `agent_running` 由调用方传入（通常已做过一次 `ssh-add -l`），避免这里再探测一次。
+/// Windows 才读 `git config` / 用户环境变量；macOS / Linux 对齐只看 OpenSSH 与启动脚本。
+pub fn inspect(env: &AgentEnv, agent_running: bool) -> AgentUnifyStatus {
+    let os = crate::ssh::toolchain::host_os();
+    let windows = os == "windows";
     let git_ssh = env.ssh.clone().or_else(|| {
         crate::agent::git_ssh_bin().map(|p| p.display().to_string())
     });
@@ -400,9 +411,10 @@ pub fn inspect(env: &AgentEnv) -> AgentUnifyStatus {
     });
     let want_ssh = git_ssh.clone();
     let want_sock = env.auth_sock.clone();
-    let git_config_value = current_core_ssh_command();
-    let user_git_ssh = user_env("GIT_SSH");
-    let user_auth_sock = user_env("SSH_AUTH_SOCK");
+    // macOS 上 `/usr/bin/git` 可能是 Xcode 占位，`git config` 会卡很久且本页用不上。
+    let git_config_value = if windows { current_core_ssh_command() } else { None };
+    let user_git_ssh = if windows { user_env("GIT_SSH") } else { None };
+    let user_auth_sock = if windows { user_env("SSH_AUTH_SOCK") } else { None };
     let git_config_ok = match (&want_ssh, &git_config_value) {
         (Some(ssh), Some(cfg)) => paths_match(ssh, cfg),
         _ => false,
@@ -417,8 +429,6 @@ pub fn inspect(env: &AgentEnv) -> AgentUnifyStatus {
     };
     let (powershell_profile_ok, bash_profile_ok) = profiles_ok();
     let git_installed = git_ssh.is_some();
-    let agent_running = env.auth_sock.is_some() && crate::agent::is_ready(env);
-    let os = crate::ssh::toolchain::host_os();
     let aligned = if os == "windows" {
         git_installed
             && agent_running
@@ -744,5 +754,17 @@ mod tests {
         assert!(!out.contains(identity::LEGACY_AGENT_BEGIN));
         assert!(!out.contains("export A=1"));
         assert!(out.contains("echo hi"));
+    }
+
+    #[test]
+    fn inspect_reuses_caller_running_flag_and_skips_git_config_off_windows() {
+        let env = AgentEnv::default();
+        let st = inspect(&env, false);
+        assert!(!st.agent_running);
+        #[cfg(not(windows))]
+        {
+            assert!(st.git_config_value.is_none());
+            assert!(!st.git_config_ok);
+        }
     }
 }

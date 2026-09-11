@@ -1538,4 +1538,67 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
   gap: 12px;
 }
 
+.s3-guide {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(90vh, 780px);
+}
+.s3-guide-body { display: flex; flex-direction: column; gap: 10px; }
+.s3-guide-intro {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+.s3-guide-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.s3-guide-tab {
+  border: 1px solid var(--border-strong);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 6px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.s3-guide-tab span { font-size: 12px; font-weight: 650; }
+.s3-guide-tab em { font-size: 10.5px; font-style: normal; color: var(--text-mute); }
+.s3-guide-tab.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
+.s3-guide-tab.on em { color: var(--accent); }
+.s3-guide-blurb { margin: 0; font-size: 12px; line-height: 1.55; }
+.s3-guide-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.s3-guide-steps li { display: flex; gap: 10px; align-items: flex-start; }
+.s3-guide-steps p { margin: 3px 0 0; font-size: 12px; line-height: 1.55; color: var(--text-soft); }
+.s3-guide-num {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.s3-guide-step-title { font-size: 12.5px; font-weight: 650; color: var(--text); }
+.s3-guide-link { margin-top: 6px; display: inline-flex; align-items: center; gap: 4px; }
+.s3-guide-map {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.s3-guide-map ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.6; color: var(--text-soft); }
+@media (max-width: 640px) {
+  .s3-guide-tabs { grid-template-columns: 1fr 1fr; }
+}
+
 
