@@ -213,6 +213,8 @@ jobs:
         run: node scripts/prepare-lang.mjs ${{ matrix.lang }}
 
       - uses: tauri-apps/tauri-action@v0
+        id: tauri
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ice-juice/git-keymaster-app
@@ -233,6 +235,10 @@ jobs:
           updaterJsonKeepUniversal: true
           retryAttempts: 3
 
+      - name: Require installer bundles
+        shell: bash
+        run: node scripts/sync-release-assets.mjs --require-bundles
+
       - name: Stamp locale on installer names
         shell: bash
         run: node scripts/rename-release-assets.mjs ${{ matrix.lang == 'en' && 'en-US' || 'zh-CN' }}
@@ -242,9 +248,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/sync-release-assets.sh "${{ steps.meta.outputs.tag }}"
+        run: node scripts/sync-release-assets.mjs "${{ steps.meta.outputs.tag }}"
 
       - name: Upload installers
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: keymaster-${{ matrix.platform }}-${{ matrix.lang }}
