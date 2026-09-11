@@ -1,10 +1,9 @@
 //! macOS：Keychain ACL 存随机 KEK（路线 B）+ LocalAuthentication（路线 A）。
 
 use crate::error::{AppError, Result};
-use security_framework::access_control::{ProtectionMode, SecAccessControl};
 use security_framework::passwords::{
-    delete_generic_password, generic_password, AccessControlOptions, PasswordOptions,
-    set_generic_password_options,
+    delete_generic_password, generic_password, set_generic_password_options, AccessControlOptions,
+    PasswordOptions,
 };
 
 use super::BiometricAvailability;
@@ -26,20 +25,16 @@ pub fn enroll(key_ref: &str, _challenge: &[u8]) -> Result<Vec<u8>> {
     let mut raw = vec![0u8; crate::vault::crypto::KEY_LEN];
     crate::vault::crypto::fill_random(&mut raw);
     let _ = delete_generic_password(SERVICE, key_ref);
-    let ac = SecAccessControl::create_with_protection(
-        Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
-        AccessControlOptions::BIOMETRY_CURRENT_SET.bits(),
-    )
-    .map_err(|e| AppError::Other(format!("无法创建钥匙串访问控制：{e}")))?;
     let mut opts = PasswordOptions::new_generic_password(SERVICE, key_ref);
-    opts.set_access_control(ac);
-    set_generic_password_options(&raw, &opts)
+    opts.set_access_control_options(AccessControlOptions::BIOMETRY_CURRENT_SET);
+    opts.set_access_synchronized(Some(false));
+    set_generic_password_options(&raw, opts)
         .map_err(|e| AppError::Other(format!("无法写入钥匙串：{e}")))?;
     Ok(raw)
 }
 
 pub fn derive(key_ref: &str, _challenge: &[u8]) -> Result<Vec<u8>> {
-    generic_password(SERVICE, key_ref).map_err(map_keychain)
+    generic_password(PasswordOptions::new_generic_password(SERVICE, key_ref)).map_err(map_keychain)
 }
 
 pub fn verify_presence(prompt: &str) -> Result<()> {
