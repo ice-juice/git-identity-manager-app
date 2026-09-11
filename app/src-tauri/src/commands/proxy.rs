@@ -1,7 +1,7 @@
 //! 网络代理 IPC。
 
 use crate::app_config::NetworkProxy;
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::Result;
 use crate::net;
 use serde::Serialize;
@@ -20,7 +20,7 @@ pub struct ProxyTestResult {
 
 #[tauri::command]
 pub fn get_network_proxy(state: State<AppState>) -> Result<Option<NetworkProxy>> {
-    let cfg = state.config.lock().unwrap();
+    let cfg = recover_lock(&state.config);
     Ok(cfg.network_proxy.clone())
 }
 
@@ -33,7 +33,7 @@ pub fn save_network_proxy(state: State<AppState>, proxy: Option<NetworkProxy>) -
             let _ = net::proxy_url(p)?;
         }
     }
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.network_proxy = proxy;
     cfg.save()
 }

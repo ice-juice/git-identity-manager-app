@@ -1,7 +1,7 @@
 //! M2 命令层：SSH 资产只读视图 + 外部密钥导入。
 //! 只读命令直接读系统；导入命令把私钥密文写进已解锁的 vault。
 
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::importer::{import_private_key, ImportRequest};
 use crate::model::{Identity, KeyRecord};
@@ -49,7 +49,7 @@ pub fn read_ssh_config(state: State<'_, AppState>, repair: Option<bool>) -> Resu
         && !state.writes_locked.load(std::sync::atomic::Ordering::SeqCst)
     {
         let vault = {
-            let guard = state.vault.lock().unwrap();
+            let guard = recover_lock(&state.vault);
             guard
                 .as_ref()
                 .filter(|v| v.is_unlocked())
@@ -142,7 +142,7 @@ pub struct ScannedKey {
 pub fn scan_keys(state: State<'_, AppState>) -> Result<Vec<ScannedKey>> {
     // 已入库指纹集合（若已解锁）。
     let in_vault: std::collections::HashSet<String> = {
-        let vault = state.vault.lock().unwrap();
+        let vault = recover_lock(&state.vault);
         match vault.as_ref() {
             Some(v) if v.is_unlocked() => crate::store::load_data(v)
                 .map(|d| d.keys.into_iter().map(|k| k.fingerprint).collect())
@@ -169,7 +169,7 @@ pub fn scan_keys(state: State<'_, AppState>) -> Result<Vec<ScannedKey>> {
         }
     }
     // config 中引用到的 IdentityFile 外部路径（读工作空间正本）。
-    let ws = state.config.lock().unwrap().workspace_path.clone();
+    let ws = recover_lock(&state.config).workspace_path.clone();
     let (_, text) = sys::read_canonical_ssh_config(ws.as_deref().map(std::path::Path::new));
     if !text.is_empty() {
         for b in config::parse(&text).blocks {
@@ -274,7 +274,7 @@ fn detect_git_ssh() -> Option<String> {
 /// 列出 vault 中已登记的密钥（需已解锁）。
 #[tauri::command(async)]
 pub fn list_keys(state: State<'_, AppState>) -> Result<Vec<KeyRecord>> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
     let root = v.root().to_path_buf();
     let mut keys = crate::store::load_data(v)?.keys;
@@ -289,7 +289,7 @@ pub fn list_keys(state: State<'_, AppState>) -> Result<Vec<KeyRecord>> {
 /// 列出 vault 中的身份（需已解锁）。
 #[tauri::command(async)]
 pub fn list_identities(state: State<'_, AppState>) -> Result<Vec<Identity>> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
     Ok(crate::store::load_data(v)?.identities)
 }
@@ -305,7 +305,7 @@ pub struct WorkspaceNavCounts {
 /// 侧栏角标：只读加密库计数，不跑 git / ssh-agent。
 #[tauri::command(async)]
 pub fn workspace_nav_counts(state: State<'_, AppState>) -> Result<WorkspaceNavCounts> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::NotInitialized)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -337,7 +337,7 @@ pub struct ImportArgs {
 #[tauri::command]
 pub fn import_key(app: AppHandle, state: State<AppState>, args: ImportArgs) -> Result<KeyRecord> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let rec = import_private_key(
         v,
@@ -361,7 +361,7 @@ pub fn import_key_from_path(app: AppHandle, state: State<AppState>, path: String
     let private_text = std::fs::read_to_string(&path)?;
     let pub_path = format!("{path}.pub");
     let public_text = std::fs::read_to_string(&pub_path).ok();
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let rec = import_private_key(
         v,
@@ -382,13 +382,13 @@ pub fn import_key_from_path(app: AppHandle, state: State<AppState>, path: String
 #[tauri::command(async)]
 pub fn test_connection(state: State<'_, AppState>, host_alias: String) -> Result<AuthResult> {
     let env = {
-        let current = state.agent_env.lock().unwrap().clone();
+        let current = recover_lock(&state.agent_env).clone();
         if crate::agent::is_ready(&current) {
             current
         } else {
             match crate::agent::ensure() {
                 Ok(started) => {
-                    *state.agent_env.lock().unwrap() = started.clone();
+                    *recover_lock(&state.agent_env) = started.clone();
                     started
                 }
                 Err(e) => return Err(e),
@@ -423,7 +423,7 @@ pub fn test_connection(state: State<'_, AppState>, host_alias: String) -> Result
         &target,
     ]);
     crate::agent::apply_to_command(&mut cmd, &env);
-    if let Some(p) = crate::net::effective(&state.config.lock().unwrap()) {
+    if let Some(p) = crate::net::effective(&recover_lock(&state.config)) {
         crate::net::apply_ssh_command(&mut cmd, &p)?;
     }
     let output = cmd

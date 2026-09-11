@@ -10,7 +10,7 @@ import {
   type HistoryMeta,
   type TotpEntry,
 } from "../lib/ipc";
-import { copyWithClear, isNeedReauth } from "../lib/secretsUi";
+import { copyWithClear, isNeedReauth, tryBiometricReauth } from "../lib/secretsUi";
 import { PageHead, Empty, Badge, FieldLabel } from "../ui/common";
 import { detectAccountSource } from "../lib/accountInput";
 import { ReauthDialog } from "../ui/ReauthDialog";
@@ -105,6 +105,16 @@ export function AccountsPage() {
       if (!isNeedReauth(e)) {
         setErr(errMessage(e));
         return;
+      }
+      if (await tryBiometricReauth()) {
+        try {
+          return await fn();
+        } catch (err) {
+          if (!isNeedReauth(err)) {
+            setErr(errMessage(err));
+            return;
+          }
+        }
       }
       return await new Promise<T | undefined>((resolve) => {
         reauthCancel.current = () => {

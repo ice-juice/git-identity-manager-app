@@ -4,6 +4,7 @@
 pub mod accounts;
 pub mod agent;
 pub mod assets;
+pub mod biometric;
 pub mod proxy;
 pub mod repo;
 pub mod secrets_ui;
@@ -18,8 +19,13 @@ pub mod write;
 use crate::app_config::AppConfig;
 use crate::vault::Vault;
 use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
+
+/// 配置/状态锁被先前 panic 污染后仍取出内部值，避免 IPC 在 WebView 回调里二次 unwrap 把进程杀掉。
+pub fn recover_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// 解锁限速：连续失败递增延迟，防手动试探。
 #[derive(Default)]
@@ -114,13 +120,24 @@ pub fn clear_reveal_grace(state: &AppState) {
     }
 }
 
+/// 指纹重认证通过后刷新免密查看窗口（与验密成功收尾一致）。
+pub fn refresh_reveal_grace(state: &AppState) {
+    let minutes = recover_lock(&state.config).reveal_grace_minutes;
+    if minutes > 0 {
+        *recover_lock(&state.reveal_grace) =
+            Some(Instant::now() + std::time::Duration::from_secs(u64::from(minutes) * 60));
+    } else {
+        *recover_lock(&state.reveal_grace) = None;
+    }
+}
+
 /// 查看 OTP/密码：窗口内可免密；否则必须 verify_password。
 pub fn ensure_reveal_authorized(state: &AppState, password: Option<&str>) -> crate::error::Result<()> {
     use crate::error::AppError;
-    let minutes = state.config.lock().unwrap().reveal_grace_minutes;
+    let minutes = recover_lock(&state.config).reveal_grace_minutes;
     let now = Instant::now();
     {
-        let g = state.reveal_grace.lock().unwrap();
+        let g = recover_lock(&state.reveal_grace);
         if let Some(until) = *g {
             if now < until {
                 return Ok(());
@@ -131,7 +148,7 @@ pub fn ensure_reveal_authorized(state: &AppState, password: Option<&str>) -> cra
         return Err(AppError::NeedReauth);
     };
     {
-        let vault = state.vault.lock().unwrap();
+        let vault = recover_lock(&state.vault);
         let v = vault.as_ref().ok_or(AppError::Locked)?;
         if !v.is_unlocked() {
             return Err(AppError::Locked);
@@ -139,10 +156,10 @@ pub fn ensure_reveal_authorized(state: &AppState, password: Option<&str>) -> cra
         v.verify_password(pw)?;
     }
     if minutes > 0 {
-        *state.reveal_grace.lock().unwrap() =
+        *recover_lock(&state.reveal_grace) =
             Some(now + std::time::Duration::from_secs(u64::from(minutes) * 60));
     } else {
-        *state.reveal_grace.lock().unwrap() = None;
+        *recover_lock(&state.reveal_grace) = None;
     }
     Ok(())
 }

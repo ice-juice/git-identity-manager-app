@@ -31,6 +31,23 @@ export function isNeedReauth(e: unknown): boolean {
   return errCode(e) === "NEED_REAUTH" || errMessage(e).includes("访问密码");
 }
 
+export function isBiometricCancelled(e: unknown): boolean {
+  return errCode(e) === "BIOMETRIC_CANCELLED";
+}
+
+/** 已开启指纹重认证时先刷系统指纹，成功后调用方可免密。失败/取消返回 false。 */
+export async function tryBiometricReauth(): Promise<boolean> {
+  try {
+    const bio = await api.biometricStatus();
+    if (!bio.enabled || !bio.revealEnabled || !bio.available) return false;
+    await api.revealAuthorizeBiometric();
+    return true;
+  } catch (e) {
+    if (isBiometricCancelled(e)) return false;
+    return false;
+  }
+}
+
 export async function customIconUrl(iconRef: string | null | undefined): Promise<string | null> {
   if (!iconRef?.startsWith("custom:")) return null;
   const hit = customCache.get(iconRef);

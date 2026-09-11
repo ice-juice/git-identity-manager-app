@@ -1,7 +1,7 @@
 //! 自更新 IPC 命令层：薄封装，动态注入 endpoints。
 
 use crate::app_config::UpdateSource;
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::platform;
 use crate::update::{self, checker::UpdateCheckResult};
@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
 pub fn get_update_source(state: State<AppState>) -> Result<UpdateSource> {
-    let cfg = state.config.lock().unwrap();
+    let cfg = recover_lock(&state.config);
     Ok(update::source::effective_source(&cfg))
 }
 
@@ -21,20 +21,20 @@ pub fn save_update_source(state: State<AppState>, source: Option<UpdateSource>) 
         let effective = UpdateSource::effective(Some(src));
         let _ = update::source::resolve_endpoints(&effective)?;
     }
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.update_source = source;
     cfg.save()
 }
 
 #[tauri::command]
 pub fn get_auto_check_update(state: State<AppState>) -> Result<bool> {
-    let cfg = state.config.lock().unwrap();
+    let cfg = recover_lock(&state.config);
     Ok(cfg.auto_check_update)
 }
 
 #[tauri::command]
 pub fn set_auto_check_update(state: State<AppState>, enabled: bool) -> Result<()> {
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.auto_check_update = enabled;
     cfg.save()
 }
@@ -42,7 +42,7 @@ pub fn set_auto_check_update(state: State<AppState>, enabled: bool) -> Result<()
 #[tauri::command]
 pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> Result<UpdateCheckResult> {
     let (src, proxy) = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         (
             update::source::effective_source(&cfg),
             crate::net::effective(&cfg),
@@ -74,20 +74,20 @@ pub fn skip_update_version(state: State<AppState>, version: String) -> Result<()
     if version.is_empty() {
         return Err(AppError::Invalid("版本号不能为空".into()));
     }
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.skipped_update_version = Some(version);
     cfg.save()
 }
 
 #[tauri::command]
 pub fn get_last_update_check(state: State<AppState>) -> Result<Option<String>> {
-    let cfg = state.config.lock().unwrap();
+    let cfg = recover_lock(&state.config);
     Ok(cfg.last_update_check_at.clone())
 }
 
 async fn install_inner(app: &AppHandle, state: &AppState) -> Result<()> {
     let (src, proxy) = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         (
             update::source::effective_source(&cfg),
             crate::net::effective(&cfg),

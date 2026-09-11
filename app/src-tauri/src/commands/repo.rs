@@ -1,7 +1,7 @@
 //! M5 命令层：地址解析/身份推断、仓库扫描/体检/切换、归属标识管理、PAT 上传公钥。
 
 use crate::agent::AgentEnv;
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::git::infer::{infer, Inference};
 use crate::git::url::parse_repo_url;
@@ -16,7 +16,7 @@ use std::process::Command;
 use tauri::{AppHandle, State};
 
 fn with_vault<T>(state: &State<AppState>, f: impl FnOnce(&Vault) -> Result<T>) -> Result<T> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -215,7 +215,7 @@ pub fn scan_and_import_repos(
 #[tauri::command(async)]
 pub fn list_managed_repos(state: State<'_, AppState>) -> Result<Vec<ManagedRepoView>> {
     let (mut data, vault) = {
-        let guard = state.vault.lock().unwrap();
+        let guard = recover_lock(&state.vault);
         let v = guard.as_ref().ok_or(AppError::Locked)?;
         if !v.is_unlocked() {
             return Err(AppError::Locked);
@@ -561,13 +561,13 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
     }
 
     let env = {
-        let current = state.agent_env.lock().unwrap().clone();
+        let current = recover_lock(&state.agent_env).clone();
         if crate::agent::is_ready(&current) {
             current
         } else {
             match crate::agent::ensure() {
                 Ok(started) => {
-                    *state.agent_env.lock().unwrap() = started.clone();
+                    *recover_lock(&state.agent_env) = started.clone();
                     started
                 }
                 Err(_) => current,
@@ -576,7 +576,7 @@ pub fn clone_repo(app: AppHandle, state: State<AppState>, args: CloneOrInitArgs)
     };
 
     let proxy = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         crate::net::effective(&cfg)
     };
 
@@ -730,7 +730,7 @@ pub fn clear_github_pat(app: AppHandle, state: State<AppState>) -> Result<()> {
 /// 校验 PAT 并返回账号名。
 #[tauri::command(async)]
 pub fn test_github_pat(state: State<'_, AppState>) -> Result<String> {
-    let proxy = crate::net::effective(&state.config.lock().unwrap());
+    let proxy = crate::net::effective(&recover_lock(&state.config));
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
@@ -743,7 +743,7 @@ pub fn test_github_pat(state: State<'_, AppState>) -> Result<String> {
 /// 拉取 PAT 账号所属组织（供批量导入归属标识）。
 #[tauri::command(async)]
 pub fn list_github_orgs(state: State<'_, AppState>) -> Result<Vec<String>> {
-    let proxy = crate::net::effective(&state.config.lock().unwrap());
+    let proxy = crate::net::effective(&recover_lock(&state.config));
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets
@@ -757,7 +757,7 @@ pub fn list_github_orgs(state: State<'_, AppState>) -> Result<Vec<String>> {
 #[tauri::command]
 pub fn upload_public_key(state: State<AppState>, key_id: String, title: String) -> Result<()> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let proxy = crate::net::effective(&state.config.lock().unwrap());
+    let proxy = crate::net::effective(&recover_lock(&state.config));
     with_vault(&state, |v| {
         let secrets = store::load_secrets(v)?;
         let token = secrets

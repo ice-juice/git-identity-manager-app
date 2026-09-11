@@ -114,6 +114,15 @@ pub struct AppConfig {
     /// 每个账号保留的密码历史条数。
     #[serde(default = "default_account_history_limit")]
     pub account_history_limit: u32,
+    /// 是否开启本机指纹解锁。默认关。
+    #[serde(default)]
+    pub biometric_unlock_enabled: bool,
+    /// 查看 OTP/账密是否允许指纹重认证。
+    #[serde(default)]
+    pub biometric_reveal_enabled: bool,
+    /// 是否允许指纹替代密码取回 TOTP 原始密钥。默认关。
+    #[serde(default)]
+    pub biometric_reveal_secret: bool,
 }
 
 /// 本机 HTTP/HTTPS/SOCKS5 代理。
@@ -231,6 +240,9 @@ impl Default for AppConfig {
             reveal_grace_minutes: default_reveal_grace_minutes(),
             clipboard_clear_seconds: default_clipboard_clear_seconds(),
             account_history_limit: default_account_history_limit(),
+            biometric_unlock_enabled: false,
+            biometric_reveal_enabled: false,
+            biometric_reveal_secret: false,
         }
     }
 }

@@ -132,21 +132,131 @@ fn reassemble(before: &str, entries: &[ManagedEntry], after: &str) -> String {
     out
 }
 
-/// 插入或更新一个托管条目（按 alias 去重），返回新 config 文本。
-pub fn upsert(existing: &str, entry: ManagedEntry) -> String {
+fn alias_eq(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
+fn dedupe_entries(entries: Vec<ManagedEntry>) -> Vec<ManagedEntry> {
+    let mut out: Vec<ManagedEntry> = Vec::new();
+    for entry in entries {
+        if let Some(slot) = out.iter_mut().find(|e| alias_eq(&e.alias, &entry.alias)) {
+            *slot = entry;
+        } else {
+            out.push(entry);
+        }
+    }
+    out
+}
+
+/// 从一段无标记文本里摘走指定 alias 的 Host 块，返回 (剩余文本, 摘出的托管条目)。
+fn take_hosts_by_alias(section: &str, aliases: &std::collections::HashSet<String>) -> (String, Vec<ManagedEntry>) {
+    if section.trim().is_empty() || aliases.is_empty() {
+        return (section.to_string(), Vec::new());
+    }
+    let parsed = config::parse(section);
+    let mut harvested = Vec::new();
+    let mut drop_starts = std::collections::HashSet::new();
+    for b in &parsed.blocks {
+        let Some(alias) = b.patterns.first() else {
+            continue;
+        };
+        if aliases.iter().any(|a| alias_eq(a, alias)) {
+            drop_starts.insert(b.start_line);
+            harvested.push(ManagedEntry {
+                alias: alias.clone(),
+                host_name: b.host_name().unwrap_or("").to_string(),
+                user: b.user().unwrap_or("git").to_string(),
+                identity_file: b.identity_file().unwrap_or("").to_string(),
+                identities_only: b.identities_only(),
+            });
+        }
+    }
+    if harvested.is_empty() {
+        return (section.to_string(), harvested);
+    }
+    (strip_host_blocks(section, &drop_starts), harvested)
+}
+
+fn strip_host_blocks(section: &str, drop_starts: &std::collections::HashSet<usize>) -> String {
+    let mut kept = String::new();
+    let mut skipping = false;
+    for (idx, raw) in section.lines().enumerate() {
+        let trimmed = raw.trim();
+        let is_host = !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && trimmed.split_whitespace().next().is_some_and(|k| k.eq_ignore_ascii_case("Host"));
+        if is_host {
+            skipping = drop_starts.contains(&idx);
+        }
+        if skipping {
+            continue;
+        }
+        kept.push_str(raw);
+        kept.push('\n');
+    }
+    kept.trim_end_matches('\n').to_string()
+}
+
+/// 把全文里同 alias 的 Host 折进唯一托管区，消除云端恢复/补齐造成的重复。
+/// 已是「唯一托管区、无重复」时原样返回，避免每次落盘改空白。
+pub fn normalize_unique_hosts(existing: &str) -> String {
     let (before, mut entries, after) = split(existing);
-    if let Some(slot) = entries.iter_mut().find(|e| e.alias == entry.alias) {
-        *slot = entry;
-    } else {
-        entries.push(entry);
+    let before_len = entries.len();
+    entries = dedupe_entries(entries);
+    let mut dirty = entries.len() != before_len;
+    let mut aliases: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.alias.to_ascii_lowercase()).collect();
+    if aliases.is_empty() {
+        // 无标记的云端快照：把带 IdentityFile 的 Host 收进托管区，避免随后 upsert 再写一套。
+        for b in config::parse(existing).blocks {
+            if b.identity_file().is_some() {
+                if let Some(alias) = b.patterns.first() {
+                    aliases.insert(alias.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    let (before, from_before) = take_hosts_by_alias(&before, &aliases);
+    let (after, from_after) = take_hosts_by_alias(&after, &aliases);
+    if !from_before.is_empty() || !from_after.is_empty() {
+        dirty = true;
+    }
+    for extra in from_before.into_iter().chain(from_after) {
+        if let Some(slot) = entries.iter_mut().find(|e| alias_eq(&e.alias, &extra.alias)) {
+            if slot.identity_file.trim().is_empty() && !extra.identity_file.trim().is_empty() {
+                *slot = extra;
+            }
+        } else {
+            entries.push(extra);
+        }
+    }
+    entries = dedupe_entries(entries);
+    if entries.is_empty() {
+        return existing.to_string();
+    }
+    if !dirty {
+        return existing.to_string();
     }
     reassemble(&before, &entries, &after)
 }
 
+/// 插入或更新一个托管条目（按 alias 去重），返回新 config 文本。
+pub fn upsert(existing: &str, entry: ManagedEntry) -> String {
+    let existing = normalize_unique_hosts(existing);
+    let (before, mut entries, after) = split(&existing);
+    if let Some(slot) = entries.iter_mut().find(|e| alias_eq(&e.alias, &entry.alias)) {
+        *slot = entry;
+    } else {
+        entries.push(entry);
+    }
+    reassemble(&before, &dedupe_entries(entries), &after)
+}
+
 /// 移除一个托管条目，返回新 config 文本。
 pub fn remove(existing: &str, alias: &str) -> String {
-    let (before, mut entries, after) = split(existing);
-    entries.retain(|e| e.alias != alias);
+    let existing = normalize_unique_hosts(existing);
+    let (before, mut entries, after) = split(&existing);
+    entries.retain(|e| !alias_eq(&e.alias, alias));
     reassemble(&before, &entries, &after)
 }
 
@@ -157,9 +267,10 @@ pub fn list(existing: &str) -> Vec<ManagedEntry> {
 
 /// 用快照里的托管区块覆盖本机 config 的托管区，保留用户手写内容。
 pub fn apply_managed_from_snapshot(home: &str, snapshot: &str) -> String {
-    let entries = list(snapshot);
+    let snapshot = normalize_unique_hosts(snapshot);
+    let entries = list(&snapshot);
     let (before, _, after) = split(home);
-    reassemble(&before, &entries, &after)
+    normalize_unique_hosts(&reassemble(&before, &entries, &after))
 }
 
 /// 多端合并托管 Host：同 alias 以本地为准，对端新增且仍有效的 alias 并入。
@@ -171,18 +282,21 @@ pub fn merge_managed_prefer_local(
     remote: &str,
     keep_remote_aliases: &std::collections::HashSet<String>,
 ) -> String {
-    let (before, mut entries, after) = split(local);
-    let local_aliases: std::collections::HashSet<String> =
-        entries.iter().map(|e| e.alias.clone()).collect();
-    for entry in list(remote) {
-        if local_aliases.contains(&entry.alias) {
+    let local = normalize_unique_hosts(local);
+    let remote = normalize_unique_hosts(remote);
+    let (before, mut entries, after) = split(&local);
+    let mut local_aliases: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.alias.to_ascii_lowercase()).collect();
+    for entry in list(&remote) {
+        if local_aliases.iter().any(|a| alias_eq(a, &entry.alias)) {
             continue;
         }
-        if keep_remote_aliases.contains(&entry.alias) {
+        if keep_remote_aliases.iter().any(|a| alias_eq(a, &entry.alias)) {
+            local_aliases.insert(entry.alias.to_ascii_lowercase());
             entries.push(entry);
         }
     }
-    reassemble(&before, &entries, &after)
+    reassemble(&before, &dedupe_entries(entries), &after)
 }
 
 #[cfg(test)]
@@ -294,6 +408,88 @@ mod tests {
             list(&out).iter().find(|e| e.alias == "gh-a").unwrap().identity_file,
             "/k/a"
         );
+    }
+
+    #[test]
+    fn normalize_dedupes_unmarked_then_managed_copy() {
+        let raw = "\
+Host github-mgccp-afkf
+    HostName github.com
+    User git
+    IdentityFile /k/a
+    IdentitiesOnly yes
+
+# ===== BEGIN managed by git-keymaster =====
+Host github-mgccp-afkf
+    HostName github.com
+    User git
+    IdentityFile /k/a
+    IdentitiesOnly yes
+Host github-ice-juice
+    HostName github.com
+    User git
+    IdentityFile /k/b
+    IdentitiesOnly yes
+# ===== END managed by git-keymaster =====
+";
+        let out = normalize_unique_hosts(raw);
+        let cfg = config::parse(&out);
+        assert_eq!(
+            cfg.blocks.iter().filter(|b| b.patterns[0] == "github-mgccp-afkf").count(),
+            1
+        );
+        assert_eq!(
+            cfg.blocks.iter().filter(|b| b.patterns[0] == "github-ice-juice").count(),
+            1
+        );
+        assert!(out.contains(BEGIN_MARKER));
+    }
+
+    #[test]
+    fn normalize_wraps_unmarked_snapshot_without_duplicating() {
+        let raw = "\
+Host github-a
+    HostName github.com
+    User git
+    IdentityFile /k/a
+    IdentitiesOnly yes
+Host github-b
+    HostName github.com
+    User git
+    IdentityFile /k/b
+    IdentitiesOnly yes
+";
+        let once = normalize_unique_hosts(raw);
+        let twice = upsert(&once, ManagedEntry::new("github-a", "github.com", "/k/a"));
+        let cfg = config::parse(&twice);
+        assert_eq!(cfg.blocks.len(), 2);
+        assert_eq!(
+            cfg.blocks.iter().filter(|b| b.patterns[0] == "github-a").count(),
+            1
+        );
+        assert_eq!(normalize_unique_hosts(&once), once);
+    }
+
+    #[test]
+    fn normalize_dedupes_duplicate_aliases_inside_managed_region() {
+        let raw = "\
+# ===== BEGIN managed by git-keymaster =====
+Host github-a
+    HostName github.com
+    User git
+    IdentityFile /k/a
+    IdentitiesOnly yes
+Host github-a
+    HostName github.com
+    User git
+    IdentityFile /k/a2
+    IdentitiesOnly yes
+# ===== END managed by git-keymaster =====
+";
+        let out = normalize_unique_hosts(raw);
+        let cfg = config::parse(&out);
+        assert_eq!(cfg.blocks.len(), 1);
+        assert_eq!(cfg.blocks[0].identity_file(), Some("/k/a2"));
     }
 
     #[test]

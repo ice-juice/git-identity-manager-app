@@ -21,6 +21,16 @@ export interface VaultStatus {
   writesLocked?: boolean;
   startupNote?: string | null;
 }
+
+export interface BiometricStatus {
+  available: boolean;
+  strong: boolean;
+  kind: string;
+  enabled: boolean;
+  revealEnabled: boolean;
+  revealSecret: boolean;
+  stale: boolean;
+}
 export interface InitResult {
   recoveryKey: string;
   workspaceId: string;
@@ -401,6 +411,13 @@ export const api = {
   vaultInit: (path: string, password: string) => invoke<InitResult>("vault_init", { path, password }),
   vaultUnlock: (password: string) => invoke<void>("vault_unlock", { password }),
   vaultUnlockRecovery: (recoveryKey: string) => invoke<void>("vault_unlock_recovery", { recoveryKey }),
+  vaultUnlockBiometric: () => invoke<void>("vault_unlock_biometric"),
+  biometricStatus: () => invoke<BiometricStatus>("biometric_status"),
+  biometricEnable: (password: string) => invoke<void>("biometric_enable", { password }),
+  biometricDisable: () => invoke<void>("biometric_disable"),
+  revealAuthorizeBiometric: () => invoke<void>("reveal_authorize_biometric"),
+  setBiometricRevealEnabled: (enabled: boolean) => invoke<void>("set_biometric_reveal_enabled", { enabled }),
+  setBiometricRevealSecret: (enabled: boolean) => invoke<void>("set_biometric_reveal_secret", { enabled }),
   vaultLock: () => invoke<void>("vault_lock"),
   changePassword: (oldPassword: string, newPassword: string) =>
     invoke<void>("change_password", { oldPassword, newPassword }),

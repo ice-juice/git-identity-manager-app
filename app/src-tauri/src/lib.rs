@@ -4,6 +4,7 @@ pub mod agent;
 pub mod app_config;
 pub mod identity;
 pub mod autostart;
+pub mod biometric;
 mod clipboard;
 pub mod commands;
 pub mod session;
@@ -65,6 +66,7 @@ pub fn run() {
             commands::vault::vault_init,
             commands::vault::vault_unlock,
             commands::vault::vault_unlock_recovery,
+            commands::vault::vault_unlock_biometric,
             commands::vault::vault_lock,
             commands::vault::change_password,
             commands::vault::rotate_recovery_key,
@@ -72,6 +74,12 @@ pub fn run() {
             commands::vault::set_launch_at_login,
             commands::vault::set_grace_days,
             commands::vault::factory_reset,
+            commands::biometric::biometric_status,
+            commands::biometric::biometric_enable,
+            commands::biometric::biometric_disable,
+            commands::biometric::reveal_authorize_biometric,
+            commands::biometric::set_biometric_reveal_enabled,
+            commands::biometric::set_biometric_reveal_secret,
             commands::security::security_checklist,
             commands::assets::read_ssh_config,
             commands::assets::open_ssh_config,
@@ -210,7 +218,7 @@ pub fn run() {
             if state.allow_exit.load(Ordering::SeqCst) {
                 return;
             }
-            let action = state.config.lock().unwrap().close_action.clone();
+            let action = commands::recover_lock(&state.config).close_action.clone();
             match action.as_deref() {
                 Some("quit") => {}
                 Some("tray") => {

@@ -10,7 +10,7 @@ import {
   type ScreenHit,
   type TotpEntry,
 } from "../lib/ipc";
-import { copyWithClear, isNeedReauth } from "../lib/secretsUi";
+import { copyWithClear, isNeedReauth, tryBiometricReauth } from "../lib/secretsUi";
 import { PageHead, Empty, Badge, FieldLabel } from "../ui/common";
 import { detectTotpInput } from "../lib/totpInput";
 import { ReauthDialog } from "../ui/ReauthDialog";
@@ -115,6 +115,16 @@ export function TotpPage() {
       if (!isNeedReauth(e)) {
         setErr(errMessage(e));
         return;
+      }
+      if (await tryBiometricReauth()) {
+        try {
+          return await fn();
+        } catch (err) {
+          if (!isNeedReauth(err)) {
+            setErr(errMessage(err));
+            return;
+          }
+        }
       }
       return await new Promise<T | undefined>((resolve) => {
         reauthCancel.current = () => {
@@ -726,6 +736,10 @@ function TotpCard({
 function ReauthInner({ hint, onConfirm, onCancel }: { hint: string; onConfirm: (pw: string) => Promise<void>; onCancel: () => void }) {
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
+  const [allowBio, setAllowBio] = useState(false);
+  useEffect(() => {
+    api.biometricStatus().then((s) => setAllowBio(!!s.revealSecret && s.enabled && s.available)).catch(() => {});
+  }, []);
   return (
     <div className="stack">
       <div className="muted">{hint}</div>
@@ -733,6 +747,21 @@ function ReauthInner({ hint, onConfirm, onCancel }: { hint: string; onConfirm: (
       {err && <div className="callout danger sm">{err}</div>}
       <div className="row">
         <button type="button" className="btn ghost sm" onClick={onCancel}>取消</button>
+        {allowBio && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={async () => {
+              try {
+                await onConfirm("");
+              } catch (e) {
+                setErr(errMessage(e));
+              }
+            }}
+          >
+            用指纹验证
+          </button>
+        )}
         <button
           type="button"
           className="btn primary sm"

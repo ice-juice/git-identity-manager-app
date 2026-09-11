@@ -1,7 +1,7 @@
 //! 隐私账号 CRUD、密码 reveal 与历史版本。
 
 use crate::app_config;
-use crate::commands::{ensure_reveal_authorized, ensure_writes_allowed, AppState};
+use crate::commands::{ensure_reveal_authorized, ensure_writes_allowed, recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::icons;
 use crate::model::{AccountEntry, AccountSecret, GroupMeta, PasswordHistoryItem};
@@ -52,7 +52,7 @@ fn now() -> String {
 
 #[tauri::command(async)]
 pub fn account_list(state: State<'_, AppState>) -> Result<AccountList> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -91,7 +91,7 @@ pub fn account_add(app: AppHandle, state: State<AppState>, args: AccountUpsertAr
         .filter(|s| !s.is_empty())
         .ok_or_else(|| AppError::Invalid("请填写密码".into()))?
         .to_string();
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -145,10 +145,10 @@ pub fn account_update(app: AppHandle, state: State<AppState>, args: AccountUpser
     ensure_writes_allowed(&state)?;
     let id = args.id.clone().ok_or_else(|| AppError::Invalid("缺少 id".into()))?;
     let limit = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         app_config::clamp_account_history_limit(cfg.account_history_limit)
     };
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -223,7 +223,7 @@ pub fn account_update(app: AppHandle, state: State<AppState>, args: AccountUpser
 #[tauri::command]
 pub fn account_delete(app: AppHandle, state: State<AppState>, id: String) -> Result<()> {
     ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -248,7 +248,7 @@ pub fn account_delete(app: AppHandle, state: State<AppState>, id: String) -> Res
 #[tauri::command]
 pub fn account_save_groups(app: AppHandle, state: State<AppState>, groups: Vec<GroupMeta>) -> Result<()> {
     ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -264,7 +264,7 @@ pub fn account_save_groups(app: AppHandle, state: State<AppState>, groups: Vec<G
 #[tauri::command]
 pub fn account_reveal_password(state: State<AppState>, id: String, password: Option<String>) -> Result<String> {
     ensure_reveal_authorized(&state, password.as_deref())?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -285,7 +285,7 @@ pub fn account_touch(state: State<AppState>, id: String) -> Result<()> {
     if state.writes_locked.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -300,7 +300,7 @@ pub fn account_touch(state: State<AppState>, id: String) -> Result<()> {
 
 #[tauri::command]
 pub fn account_history_list(state: State<AppState>, id: String) -> Result<Vec<HistoryMeta>> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -331,7 +331,7 @@ pub fn account_reveal_history(
     password: Option<String>,
 ) -> Result<String> {
     ensure_reveal_authorized(&state, password.as_deref())?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -350,10 +350,10 @@ pub fn account_reveal_history(
 pub fn account_rollback_history(app: AppHandle, state: State<AppState>, id: String, index: usize) -> Result<()> {
     ensure_writes_allowed(&state)?;
     let limit = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         app_config::clamp_account_history_limit(cfg.account_history_limit)
     };
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -395,7 +395,7 @@ pub fn account_rollback_history(app: AppHandle, state: State<AppState>, id: Stri
 #[tauri::command]
 pub fn account_clear_history(app: AppHandle, state: State<AppState>, id: String) -> Result<()> {
     ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);

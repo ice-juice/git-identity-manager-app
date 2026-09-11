@@ -1,7 +1,7 @@
 //! 云端同步与本地离线备份 IPC 命令（M6 + v1.1）
 
 use crate::app_config::{self, clamp_auto_sync_minutes};
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::sync::backup::{self, BackupSummary};
 use crate::sync::engine::{self, CloudRestorePreview, CloudSyncStatus, SnapshotMeta, SyncResult};
@@ -102,7 +102,7 @@ fn invalidate_client_cache() {
 }
 
 fn clone_unlocked_vault(state: &AppState) -> Result<Vault> {
-    let guard = state.vault.lock().unwrap();
+    let guard = recover_lock(&state.vault);
     let vault = guard.as_ref().ok_or(AppError::Locked)?;
     if !vault.is_unlocked() {
         return Err(AppError::Locked);
@@ -133,7 +133,7 @@ pub fn export_vault_backup(
     dest_path: String,
     password: String,
 ) -> Result<BackupSummary> {
-    let vault_guard = state.vault.lock().unwrap();
+    let vault_guard = recover_lock(&state.vault);
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
     backup::export_backup(vault, Path::new(&dest_path), &password)
 }
@@ -163,7 +163,7 @@ pub fn import_vault_backup(
     merge: bool,
 ) -> Result<BackupSummary> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault_guard = state.vault.lock().unwrap();
+    let vault_guard = recover_lock(&state.vault);
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
     let summary = backup::import_backup(vault, Path::new(&src_path), &password, merge)?;
     drop(vault_guard);
@@ -175,7 +175,7 @@ pub fn import_vault_backup(
 
 #[tauri::command]
 pub fn get_cloud_sync_config(state: State<AppState>) -> Result<Option<S3Config>> {
-    let config = state.config.lock().unwrap();
+    let config = recover_lock(&state.config);
     Ok(config.cloud_sync.clone())
 }
 
@@ -184,7 +184,7 @@ pub fn save_cloud_sync_config(
     state: State<AppState>,
     sync_config: Option<S3Config>,
 ) -> Result<()> {
-    let mut config = state.config.lock().unwrap();
+    let mut config = recover_lock(&state.config);
     config.cloud_sync = sync_config;
     config.save()?;
     drop(config);
@@ -208,7 +208,7 @@ pub fn import_s3_config(src_path: String) -> Result<S3Config> {
 #[tauri::command]
 pub fn test_cloud_sync_config(state: State<AppState>, sync_config: S3Config) -> Result<u128> {
     let proxy = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         crate::net::for_cloud_sync(&cfg)
     };
     let client = S3Client::new_with_proxy(sync_config, proxy.as_ref())?;
@@ -227,7 +227,7 @@ pub fn get_cloud_sync_status(state: State<'_, AppState>, lite: Option<bool>) -> 
 
     let vault = clone_unlocked_vault(&state)?;
     let sync_config = {
-        let config = state.config.lock().unwrap();
+        let config = recover_lock(&state.config);
         config.cloud_sync.clone()
     };
 
@@ -265,7 +265,7 @@ pub struct CloudSyncPageData {
 pub fn get_cloud_sync_page(state: State<'_, AppState>) -> Result<CloudSyncPageData> {
     let vault = clone_unlocked_vault(&state)?;
     let (config, auto_sync) = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         (
             cfg.cloud_sync.clone(),
             AutoSyncSettings {
@@ -295,11 +295,11 @@ pub fn get_cloud_sync_page(state: State<'_, AppState>) -> Result<CloudSyncPageDa
 #[tauri::command(async)]
 pub fn cloud_sync_push(state: State<'_, AppState>) -> Result<SyncResult> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault_guard = state.vault.lock().unwrap();
+    let vault_guard = recover_lock(&state.vault);
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
 
     let sync_config = {
-        let config = state.config.lock().unwrap();
+        let config = recover_lock(&state.config);
         config
             .cloud_sync
             .clone()
@@ -315,11 +315,11 @@ pub fn cloud_sync_push(state: State<'_, AppState>) -> Result<SyncResult> {
 
 #[tauri::command(async)]
 pub fn cloud_sync_pull(state: State<'_, AppState>) -> Result<SyncResult> {
-    let vault_guard = state.vault.lock().unwrap();
+    let vault_guard = recover_lock(&state.vault);
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
 
     let sync_config = {
-        let config = state.config.lock().unwrap();
+        let config = recover_lock(&state.config);
         config
             .cloud_sync
             .clone()
@@ -344,7 +344,7 @@ pub struct AutoSyncSettings {
 
 #[tauri::command]
 pub fn get_auto_sync_settings(state: State<AppState>) -> AutoSyncSettings {
-    let cfg = state.config.lock().unwrap();
+    let cfg = recover_lock(&state.config);
     AutoSyncSettings {
         minutes: cfg.auto_sync_minutes,
         last_auto_sync_at: cfg.last_auto_sync_at.clone(),
@@ -356,7 +356,7 @@ pub fn get_auto_sync_settings(state: State<AppState>) -> AutoSyncSettings {
 #[tauri::command]
 pub fn set_auto_sync_minutes(state: State<AppState>, minutes: u32) -> Result<u32> {
     let minutes = clamp_auto_sync_minutes(minutes);
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.auto_sync_minutes = minutes;
     cfg.save()?;
     Ok(minutes)
@@ -374,7 +374,7 @@ fn require_client(state: &AppState) -> Result<S3Client> {
 }
 
 fn s3_from_state(state: &AppState, sync_config: S3Config) -> Result<S3Client> {
-    S3Client::from_app(sync_config, &state.config.lock().unwrap())
+    S3Client::from_app(sync_config, &recover_lock(&state.config))
 }
 
 #[tauri::command]
@@ -394,7 +394,7 @@ pub fn list_cloud_snapshots(state: State<AppState>, force: Option<bool>) -> Resu
 #[tauri::command]
 pub fn restore_cloud_snapshot(state: State<AppState>, snapshot_id: String) -> Result<SyncResult> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault_guard = state.vault.lock().unwrap();
+    let vault_guard = recover_lock(&state.vault);
     let vault = vault_guard.as_ref().ok_or(AppError::Locked)?;
     let client = require_client(&state)?;
     let result = engine::restore_snapshot(vault, &client, &snapshot_id)?;
@@ -469,7 +469,7 @@ pub fn restore_from_cloud(
         return Err(AppError::AlreadyInitialized(path));
     }
 
-    let client = S3Client::from_app(sync_config.clone(), &state.config.lock().unwrap())?;
+    let client = S3Client::from_app(sync_config.clone(), &recover_lock(&state.config))?;
     let (vault, result) = engine::restore_from_cloud(
         &root,
         &password,

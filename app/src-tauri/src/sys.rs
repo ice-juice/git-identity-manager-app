@@ -541,6 +541,7 @@ pub fn persist_ssh_config(workspace: Option<&std::path::Path>, text: &str) -> Re
         std::fs::create_dir_all(parent)?;
     }
     let text = localize_ssh_config(text, ws);
+    let text = crate::ssh::managed::normalize_unique_hosts(&text);
     // 换机后若上次 icacls 把正本收成不可写，先把当前用户加回去，避免整段同步失败。
     ensure_current_user_can_write(&dest);
     crate::vault::atomic_write(&dest, text.as_bytes())?;

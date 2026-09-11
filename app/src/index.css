@@ -643,11 +643,44 @@ textarea.input { resize: vertical; min-height: 56px; }
 hr.sep { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
 
 .unlock-card {
-  width: 290px; background: var(--panel); border-radius: 8px;
-  box-shadow: var(--shadow-lg); padding: 16px 14px; text-align: center;
+  width: 320px; background: var(--panel); border-radius: 8px;
+  box-shadow: var(--shadow-lg); padding: 18px 16px; text-align: center;
   border: 1px solid var(--border);
 }
 .unlock-card .input { text-align: left; }
+.unlock-bio { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.unlock-bio-pad {
+  width: 84px; height: 84px; border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.unlock-bio-pad:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+.unlock-bio-pad:disabled { cursor: default; opacity: 0.85; }
+.unlock-bio-pad.is-busy { animation: unlock-bio-pulse 1.2s ease-in-out infinite; }
+.unlock-bio-hint { font-size: 11px; color: var(--text-mute); line-height: 1.45; max-width: 240px; }
+.unlock-alts {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin-top: 14px;
+}
+.unlock-switch {
+  border: 0; background: transparent; color: var(--text-mute);
+  font-size: 11.5px; cursor: pointer; padding: 2px 4px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.unlock-switch:hover:not(:disabled) { color: var(--accent); }
+.unlock-switch:disabled { cursor: default; opacity: 0.55; }
+@keyframes unlock-bio-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.28); }
+  50% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+}
 .unlock-logo {
   width: 34px; height: 34px; border-radius: 7px; margin: 0 auto 6px;
   background: var(--accent-gradient); color: var(--accent-contrast);

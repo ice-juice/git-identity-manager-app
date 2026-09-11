@@ -1,6 +1,6 @@
 //! TOTP CRUD、生成验证码、导入与密钥取回。
 
-use crate::commands::{ensure_reveal_authorized, ensure_writes_allowed, AppState};
+use crate::commands::{ensure_reveal_authorized, ensure_writes_allowed, recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::icons;
 use crate::model::{GroupMeta, TotpEntry};
@@ -70,7 +70,7 @@ fn now() -> String {
 
 #[tauri::command(async)]
 pub fn totp_list(state: State<'_, AppState>) -> Result<TotpList> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -109,7 +109,7 @@ pub fn totp_add(app: AppHandle, state: State<AppState>, args: TotpUpsertArgs) ->
         .filter(|s| !s.is_empty())
         .ok_or_else(|| AppError::Invalid("请填写 TOTP 密钥".into()))?;
     let secret = totp::normalize_secret(secret)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -151,7 +151,7 @@ pub fn totp_add(app: AppHandle, state: State<AppState>, args: TotpUpsertArgs) ->
 pub fn totp_update(app: AppHandle, state: State<AppState>, args: TotpUpsertArgs) -> Result<TotpEntry> {
     ensure_writes_allowed(&state)?;
     let id = args.id.clone().ok_or_else(|| AppError::Invalid("缺少 id".into()))?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -202,7 +202,7 @@ pub fn totp_update(app: AppHandle, state: State<AppState>, args: TotpUpsertArgs)
 #[tauri::command]
 pub fn totp_delete(app: AppHandle, state: State<AppState>, id: String) -> Result<()> {
     ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -227,7 +227,7 @@ pub fn totp_delete(app: AppHandle, state: State<AppState>, id: String) -> Result
 #[tauri::command]
 pub fn totp_save_groups(app: AppHandle, state: State<AppState>, groups: Vec<GroupMeta>) -> Result<()> {
     ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -243,7 +243,7 @@ pub fn totp_save_groups(app: AppHandle, state: State<AppState>, groups: Vec<Grou
 #[tauri::command]
 pub fn totp_generate_code(state: State<AppState>, id: String, password: Option<String>) -> Result<TotpCode> {
     ensure_reveal_authorized(&state, password.as_deref())?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -286,12 +286,27 @@ pub fn totp_scan_screen() -> Result<Vec<qrscan::ScreenHit>> {
 
 #[tauri::command]
 pub fn totp_reveal_secret(state: State<AppState>, id: String, password: String) -> Result<TotpSecretReveal> {
-    let vault = state.vault.lock().unwrap();
-    let v = vault.as_ref().ok_or(AppError::Locked)?;
-    if !v.is_unlocked() {
-        return Err(AppError::Locked);
+    let allow_bio = {
+        let cfg = recover_lock(&state.config);
+        cfg.biometric_unlock_enabled && cfg.biometric_reveal_secret
+    };
+    {
+        let vault = recover_lock(&state.vault);
+        let v = vault.as_ref().ok_or(AppError::Locked)?;
+        if !v.is_unlocked() {
+            return Err(AppError::Locked);
+        }
+        if !password.trim().is_empty() {
+            v.verify_password(&password)?;
+        } else if !allow_bio {
+            return Err(AppError::NeedReauth);
+        }
     }
-    v.verify_password(&password)?;
+    if password.trim().is_empty() {
+        crate::biometric::verify_presence("确认取回 TOTP 原始密钥")?;
+    }
+    let vault = recover_lock(&state.vault);
+    let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_totp(v)?;
     let entry = data
         .entries

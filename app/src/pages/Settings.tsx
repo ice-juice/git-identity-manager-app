@@ -13,10 +13,12 @@ import {
   Cloud,
   FileCog,
   Play,
+  Fingerprint,
 } from "lucide-react";
 import {
   api,
   errMessage,
+  type BiometricStatus,
   type NetworkProxy,
   type ProxyTestResult,
   type SecurityChecklist,
@@ -567,7 +569,7 @@ function AboutUpdateCard() {
   useEffect(() => {
     getVersion()
       .then(setVersion)
-      .catch(() => setVersion("1.2.1"));
+      .catch(() => setVersion("1.3.0"));
     loadPrefs().catch((e) => setErr(errMessage(e)));
   }, []);
 
@@ -1025,6 +1027,8 @@ export function Settings() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [newRecovery, setNewRecovery] = useState("");
+  const [bio, setBio] = useState<BiometricStatus | null>(null);
+  const [bioPw, setBioPw] = useState("");
 
   useEffect(() => {
     setGraceDays(String(status?.graceDays ?? 0));
@@ -1036,6 +1040,7 @@ export function Settings() {
       setClipSec(String(s.clipboardClearSeconds));
       setHistLimit(String(s.accountHistoryLimit));
     }).catch(() => {});
+    api.biometricStatus().then(setBio).catch(() => setBio(null));
   }, []);
 
   useEffect(() => {
@@ -1400,6 +1405,129 @@ export function Settings() {
                       已设置免验证天数，但本机会话尚未建立或已过期。下次用访问密码解锁后会重新生效。
                     </div>
                   )}
+                </div>
+              </Card>
+
+              <Card title="指纹 / 生物识别解锁">
+                <div className="stack">
+                  <div className="muted">
+                    使用系统已录入的 Windows Hello / Touch ID，应用不会采集或保存指纹。开启须先输入访问密码。
+                  </div>
+                  {!bio?.available && (
+                    <div className="callout warn" style={{ marginTop: 4 }}>
+                      本机未检测到可用的指纹 / 人脸 / Windows Hello 硬件。
+                    </div>
+                  )}
+                  {bio?.stale && (
+                    <div className="callout warn" style={{ marginTop: 4 }}>
+                      指纹凭据已失效，请用访问密码解锁后重新开启。
+                    </div>
+                  )}
+                  <div className="field">
+                    <FieldLabel name="启用指纹解锁" tip="开启后解锁工作空间可刷系统指纹，不必再输访问密码。密码与恢复密钥始终可回落。" />
+                    {bio?.available && !bio.enabled && (
+                      <div className="row" style={{ marginTop: 4 }}>
+                        <input
+                          className="input"
+                          type="password"
+                          placeholder="输入访问密码以开启"
+                          value={bioPw}
+                          onChange={(e) => setBioPw(e.target.value)}
+                          style={{ flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn primary sm"
+                          disabled={busy || !bioPw.trim()}
+                          onClick={async () => {
+                            setBusy(true);
+                            setErr("");
+                            try {
+                              await api.biometricEnable(bioPw);
+                              setBioPw("");
+                              setBio(await api.biometricStatus());
+                              setMsg("已开启指纹解锁");
+                            } catch (e) {
+                              setErr(errMessage(e));
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          <Fingerprint size={14} /> 开启
+                        </button>
+                      </div>
+                    )}
+                    {bio?.enabled && (
+                      <div className="row" style={{ marginTop: 4 }}>
+                        <span className="hint">已开启，解锁与查看验证码/账密可用系统指纹。</span>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            setErr("");
+                            try {
+                              await api.biometricDisable();
+                              setBio(await api.biometricStatus());
+                              setMsg("已关闭指纹解锁");
+                            } catch (e) {
+                              setErr(errMessage(e));
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          关闭
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="field">
+                    <FieldLabel name="查看验证码 / 账密时允许指纹" tip="vault 已解锁后，查看一次性验证码或账户密码可用指纹代替访问密码。" />
+                    <label className="row" style={{ marginTop: 4, gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        disabled={!bio?.enabled || busy}
+                        checked={!!bio?.revealEnabled}
+                        onChange={async (e) => {
+                          setBusy(true);
+                          try {
+                            await api.setBiometricRevealEnabled(e.target.checked);
+                            setBio(await api.biometricStatus());
+                          } catch (err) {
+                            setErr(errMessage(err));
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      />
+                      <span className="hint">默认随主开关打开</span>
+                    </label>
+                  </div>
+                  <div className="field">
+                    <FieldLabel name="取回 TOTP 原始密钥也允许指纹" tip="这是导出级操作。默认仍要求访问密码，打开后可用指纹替代。" />
+                    <label className="row" style={{ marginTop: 4, gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        disabled={!bio?.enabled || busy}
+                        checked={!!bio?.revealSecret}
+                        onChange={async (e) => {
+                          setBusy(true);
+                          try {
+                            await api.setBiometricRevealSecret(e.target.checked);
+                            setBio(await api.biometricStatus());
+                          } catch (err) {
+                            setErr(errMessage(err));
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      />
+                      <span className="hint">有风险，默认关闭</span>
+                    </label>
+                  </div>
                 </div>
               </Card>
 

@@ -1,6 +1,6 @@
 //! M3 命令层：密钥生成、config 预览/落盘、新建身份、机密二次验证查看。
 
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::model::{Identity, KeyRecord};
 use crate::platform::{self, PlatformOps};
@@ -47,6 +47,8 @@ pub fn reconcile_ssh_hosts(v: &Vault) -> Result<u32> {
     if sys::text_is_include_only(&text) {
         text.clear();
     }
+    let before_norm = text.clone();
+    text = managed::normalize_unique_hosts(&text);
     let mut added = 0u32;
     let mut updated = 0u32;
     let mut data_changed = false;
@@ -116,11 +118,18 @@ pub fn reconcile_ssh_hosts(v: &Vault) -> Result<u32> {
     if data_changed {
         store::save_data(v, &data)?;
     }
-    if added > 0 || updated > 0 {
+    if added > 0 || updated > 0 || text != before_norm {
         persist_workspace_ssh_config(v, &text)?;
         util::audit(
             v.root(),
-            &format!("按身份补齐/校正 SSH Host 新增 {added} 条、路径更新 {updated} 条"),
+            &format!(
+                "按身份补齐/校正 SSH Host 新增 {added} 条、路径更新 {updated} 条{}",
+                if added == 0 && updated == 0 {
+                    "（已去除重复 Host）"
+                } else {
+                    ""
+                }
+            ),
         );
     } else {
         let localized = sys::localize_ssh_config(&text, v.root());
@@ -133,13 +142,13 @@ pub fn reconcile_ssh_hosts(v: &Vault) -> Result<u32> {
 
 fn ready_agent(state: &State<AppState>) -> Result<crate::agent::AgentEnv> {
     {
-        let env = state.agent_env.lock().unwrap().clone();
+        let env = recover_lock(&state.agent_env).clone();
         if crate::agent::is_ready(&env) {
             return Ok(env);
         }
     }
     let env = crate::agent::ensure()?;
-    *state.agent_env.lock().unwrap() = env.clone();
+    *recover_lock(&state.agent_env) = env.clone();
     Ok(env)
 }
 
@@ -223,7 +232,7 @@ fn deploy_openssh_files(v: &Vault, record: &KeyRecord, stem: &str, strict: bool)
 #[tauri::command]
 pub fn generate_key(app: AppHandle, state: State<AppState>, comment: String, name: Option<String>) -> Result<KeyRecord> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -350,7 +359,7 @@ pub struct CreateIdentityResult {
 #[tauri::command]
 pub fn create_identity(app: AppHandle, state: State<AppState>, args: CreateIdentityArgs) -> Result<CreateIdentityResult> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -472,7 +481,7 @@ pub fn stage_identity_draft(
         return Err(AppError::Invalid("别名、主机或密钥不完整，无法验证".into()));
     }
 
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -536,7 +545,7 @@ pub struct AbortIdentityDraftArgs {
 pub fn abort_identity_draft(state: State<AppState>, args: AbortIdentityDraftArgs) -> Result<()> {
     let alias = args.host_alias.trim();
     let key_id = args.key_id.trim();
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -573,7 +582,7 @@ pub fn reveal_key_passphrase(
     password: String,
     key_id: String,
 ) -> Result<String> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -604,7 +613,7 @@ pub fn reveal_key_material(
     password: String,
     key_id: String,
 ) -> Result<RevealedKeyMaterial> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -648,7 +657,7 @@ pub struct UpdateIdentityArgs {
 #[tauri::command]
 pub fn update_identity(app: AppHandle, state: State<AppState>, args: UpdateIdentityArgs) -> Result<Identity> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -744,7 +753,7 @@ pub fn update_identity(app: AppHandle, state: State<AppState>, args: UpdateIdent
 #[tauri::command]
 pub fn delete_identity(app: AppHandle, state: State<AppState>, identity_id: String) -> Result<()> {
     crate::commands::ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);

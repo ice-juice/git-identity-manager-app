@@ -2,7 +2,7 @@
 
 use crate::app_config;
 use crate::clipboard;
-use crate::commands::{ensure_writes_allowed, AppState};
+use crate::commands::{ensure_writes_allowed, recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::icons::{self, BuiltinIconInfo, CustomIconInfo};
 use crate::store;
@@ -55,7 +55,7 @@ pub struct RevealSettings {
 
 #[tauri::command]
 pub fn get_reveal_settings(state: State<AppState>) -> RevealSettings {
-    let cfg = state.config.lock().unwrap();
+    let cfg = recover_lock(&state.config);
     RevealSettings {
         reveal_grace_minutes: cfg.reveal_grace_minutes,
         clipboard_clear_seconds: cfg.clipboard_clear_seconds,
@@ -66,7 +66,7 @@ pub fn get_reveal_settings(state: State<AppState>) -> RevealSettings {
 #[tauri::command]
 pub fn set_reveal_grace_minutes(state: State<AppState>, minutes: u32) -> Result<u32> {
     let minutes = app_config::clamp_reveal_grace_minutes(minutes);
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.reveal_grace_minutes = minutes;
     cfg.save()?;
     if minutes == 0 {
@@ -78,7 +78,7 @@ pub fn set_reveal_grace_minutes(state: State<AppState>, minutes: u32) -> Result<
 #[tauri::command]
 pub fn set_clipboard_clear_seconds(state: State<AppState>, seconds: u32) -> Result<u32> {
     let seconds = app_config::clamp_clipboard_clear_seconds(seconds);
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.clipboard_clear_seconds = seconds;
     cfg.save()?;
     Ok(seconds)
@@ -87,7 +87,7 @@ pub fn set_clipboard_clear_seconds(state: State<AppState>, seconds: u32) -> Resu
 #[tauri::command]
 pub fn set_account_history_limit(state: State<AppState>, limit: u32) -> Result<u32> {
     let limit = app_config::clamp_account_history_limit(limit);
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.account_history_limit = limit;
     cfg.save()?;
     Ok(limit)
@@ -101,7 +101,7 @@ pub fn icon_list_builtin() -> Vec<BuiltinIconInfo> {
 #[tauri::command]
 pub fn icon_upload_custom(state: State<AppState>, file_path: String) -> Result<CustomIconInfo> {
     ensure_writes_allowed(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);
@@ -112,7 +112,7 @@ pub fn icon_upload_custom(state: State<AppState>, file_path: String) -> Result<C
 
 #[tauri::command]
 pub fn icon_get_custom(state: State<AppState>, icon_ref: String) -> Result<String> {
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     if !v.is_unlocked() {
         return Err(AppError::Locked);

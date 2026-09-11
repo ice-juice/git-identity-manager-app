@@ -1,7 +1,7 @@
 //! vault 相关 IPC 命令。
 
 use crate::autostart;
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::session;
 use crate::vault::crypto::MasterKey;
@@ -48,26 +48,34 @@ pub struct PathCheck {
 /// 查询当前状态（前端启动时首先调用）。
 #[tauri::command]
 pub fn vault_status(state: State<AppState>) -> VaultStatus {
-    let cfg = state.config.lock().unwrap();
-    let vault = state.vault.lock().unwrap();
+    let cfg = recover_lock(&state.config);
+    let vault = recover_lock(&state.vault);
     let initialized = cfg
         .workspace_path
         .as_ref()
         .map(|p| Vault::exists(&PathBuf::from(p)))
         .unwrap_or(false);
     let workspace_id = vault.as_ref().map(|v| v.workspace_id().to_string());
+    let unlocked = vault.as_ref().map(|v| v.is_unlocked()).unwrap_or(false);
+    let workspace_path = cfg.workspace_path.clone();
+    let auto_lock_minutes = cfg.auto_lock_minutes;
+    let launch_at_login = cfg.launch_at_login || autostart::is_enabled();
+    let grace_days = cfg.grace_days;
+    let close_action = cfg.close_action.clone();
+    drop(vault);
+    drop(cfg);
     let grace = session::info(workspace_id.as_deref());
     VaultStatus {
         initialized,
-        unlocked: vault.as_ref().map(|v| v.is_unlocked()).unwrap_or(false),
-        workspace_path: cfg.workspace_path.clone(),
+        unlocked,
+        workspace_path,
         workspace_id,
-        auto_lock_minutes: cfg.auto_lock_minutes,
-        launch_at_login: cfg.launch_at_login || autostart::is_enabled(),
-        grace_days: cfg.grace_days,
+        auto_lock_minutes,
+        launch_at_login,
+        grace_days,
         grace_active: grace.active,
         grace_expires_at: grace.expires_at,
-        close_action: cfg.close_action.clone(),
+        close_action,
         writes_locked: state.writes_locked.load(std::sync::atomic::Ordering::SeqCst),
         startup_note: state.startup_note.lock().ok().and_then(|n| n.clone()),
     }
@@ -111,12 +119,12 @@ pub fn vault_init(state: State<'_, AppState>, path: String, password: String) ->
 
     // 记录工作空间路径（非机密）。
     {
-        let mut cfg = state.config.lock().unwrap();
+        let mut cfg = recover_lock(&state.config);
         cfg.workspace_path = Some(path);
         cfg.save()?;
     }
-    *state.vault.lock().unwrap() = Some(vault);
-    state.unlock_guard.lock().unwrap().reset();
+    *recover_lock(&state.vault) = Some(vault);
+    recover_lock(&state.unlock_guard).reset();
     grant_grace_if_configured(&state);
     let _ = crate::sys::adopt_ssh_config(&root);
 
@@ -134,7 +142,7 @@ pub(crate) fn adopt_unlocked_vault(
     cloud_sync: Option<crate::sync::s3::S3Config>,
 ) -> Result<()> {
     {
-        let mut cfg = state.config.lock().unwrap();
+        let mut cfg = recover_lock(&state.config);
         cfg.workspace_path = Some(workspace_path.clone());
         if let Some(sync) = cloud_sync {
             cfg.cloud_sync = Some(sync);
@@ -142,49 +150,55 @@ pub(crate) fn adopt_unlocked_vault(
         cfg.save()?;
     }
     let root = PathBuf::from(&workspace_path);
-    *state.vault.lock().unwrap() = Some(vault);
-    state.unlock_guard.lock().unwrap().reset();
+    *recover_lock(&state.vault) = Some(vault);
+    recover_lock(&state.unlock_guard).reset();
     grant_grace_if_configured(state);
     let _ = crate::sys::adopt_ssh_config(&root);
     Ok(())
 }
 
-fn ensure_loaded(state: &AppState) -> Result<()> {
+pub(crate) fn ensure_loaded(state: &AppState) -> Result<()> {
     let cfg_path = {
-        let cfg = state.config.lock().unwrap();
+        let cfg = recover_lock(&state.config);
         cfg.workspace_path.clone()
     };
     let path = cfg_path.ok_or(AppError::NotInitialized)?;
-    let mut vault = state.vault.lock().unwrap();
+    let mut vault = recover_lock(&state.vault);
     if vault.is_none() {
         *vault = Some(Vault::load(&PathBuf::from(path))?);
     }
     Ok(())
 }
 
+pub(crate) fn resolve_workspace_id(state: &AppState) -> Option<String> {
+    recover_lock(&state.vault)
+        .as_ref()
+        .map(|v| v.workspace_id().to_string())
+}
+
 /// 用访问密码解锁（带限速）。
 #[tauri::command(async)]
 pub fn vault_unlock(app: AppHandle, state: State<'_, AppState>, password: String) -> Result<()> {
     {
-        let guard = state.unlock_guard.lock().unwrap();
+        let guard = recover_lock(&state.unlock_guard);
         if guard.remaining_ms() > 0 {
             return Err(AppError::RateLimited);
         }
     }
     ensure_loaded(&state)?;
-    let mut vault = state.vault.lock().unwrap();
+    let mut vault = recover_lock(&state.vault);
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
     match v.unlock_with_password(&password) {
         Ok(()) => {
             drop(vault);
-            state.unlock_guard.lock().unwrap().reset();
+            recover_lock(&state.unlock_guard).reset();
             grant_grace_if_configured(&state);
             begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
             schedule_after_unlock(app);
             Ok(())
         }
         Err(e) => {
-            state.unlock_guard.lock().unwrap().record_failure();
+            recover_lock(&state.unlock_guard).record_failure();
             Err(e)
         }
     }
@@ -194,7 +208,7 @@ pub fn vault_unlock(app: AppHandle, state: State<'_, AppState>, password: String
 #[tauri::command(async)]
 pub fn vault_unlock_recovery(app: AppHandle, state: State<'_, AppState>, recovery_key: String) -> Result<()> {
     ensure_loaded(&state)?;
-    let mut vault = state.vault.lock().unwrap();
+    let mut vault = recover_lock(&state.vault);
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
     v.unlock_with_recovery(&recovery_key)?;
     drop(vault);
@@ -204,6 +218,40 @@ pub fn vault_unlock_recovery(app: AppHandle, state: State<'_, AppState>, recover
     Ok(())
 }
 
+/// 用本机指纹 / Windows Hello / Touch ID 解锁。
+#[tauri::command(async)]
+pub fn vault_unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    crate::biometric::bind_window(&app);
+    {
+        let guard = recover_lock(&state.unlock_guard);
+        if guard.remaining_ms() > 0 {
+            return Err(AppError::RateLimited);
+        }
+    }
+    ensure_loaded(&state)?;
+    let workspace_id = resolve_workspace_id(&state).ok_or(AppError::NotInitialized)?;
+    match crate::biometric::unlock_master_key(&workspace_id) {
+        Ok(mk) => {
+            let mut vault = recover_lock(&state.vault);
+            let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
+            v.unlock_with_master_key(mk)?;
+            drop(vault);
+            recover_lock(&state.unlock_guard).reset();
+            grant_grace_if_configured(&state);
+            begin_write_lock(&state, &app, "正在从云端同步，可浏览、暂不可修改");
+            schedule_after_unlock(app);
+            Ok(())
+        }
+        Err(AppError::BiometricCancelled) => Err(AppError::BiometricCancelled),
+        Err(e) => {
+            if !matches!(e, AppError::BiometricStale) {
+                recover_lock(&state.unlock_guard).record_failure();
+            }
+            Err(e)
+        }
+    }
+}
+
 /// 锁定：清零内存中的 MK。
 #[tauri::command]
 pub fn vault_lock(state: State<AppState>) {
@@ -211,7 +259,7 @@ pub fn vault_lock(state: State<AppState>) {
 }
 
 pub fn lock_in_memory(state: &AppState) {
-    if let Some(v) = state.vault.lock().unwrap().as_mut() {
+    if let Some(v) = recover_lock(&state.vault).as_mut() {
         v.lock();
     }
     crate::commands::clear_reveal_grace(state);
@@ -224,12 +272,12 @@ pub fn lock_in_memory(state: &AppState) {
 /// 按免验证设置尝试静默解锁。`grace_days == 0` 或会话过期时返回 false。
 pub fn try_grace_unlock_silent(state: &AppState) -> bool {
     {
-        let vault = state.vault.lock().unwrap();
+        let vault = recover_lock(&state.vault);
         if vault.as_ref().is_some_and(|v| v.is_unlocked()) {
             return true;
         }
     }
-    let days = state.config.lock().unwrap().grace_days;
+    let days = recover_lock(&state.config).grace_days;
     if days == 0 {
         return false;
     }
@@ -237,7 +285,7 @@ pub fn try_grace_unlock_silent(state: &AppState) -> bool {
         return false;
     }
     let workspace_id = {
-        let vault = state.vault.lock().unwrap();
+        let vault = recover_lock(&state.vault);
         match vault.as_ref() {
             Some(v) => v.workspace_id().to_string(),
             None => return false,
@@ -247,7 +295,7 @@ pub fn try_grace_unlock_silent(state: &AppState) -> bool {
         return false;
     };
     {
-        let mut vault = state.vault.lock().unwrap();
+        let mut vault = recover_lock(&state.vault);
         let Some(v) = vault.as_mut() else {
             return false;
         };
@@ -262,7 +310,7 @@ pub fn try_grace_unlock_silent(state: &AppState) -> bool {
 #[tauri::command]
 pub fn change_password(state: State<AppState>, old_password: String, new_password: String) -> Result<()> {
     ensure_loaded(&state)?;
-    let mut vault = state.vault.lock().unwrap();
+    let mut vault = recover_lock(&state.vault);
     let v = vault.as_mut().ok_or(AppError::NotInitialized)?;
     v.change_password(&old_password, &new_password)?;
     drop(vault);
@@ -274,7 +322,7 @@ pub fn change_password(state: State<AppState>, old_password: String, new_passwor
 /// 轮换恢复密钥（需已解锁），返回新恢复密钥。
 #[tauri::command]
 pub fn rotate_recovery_key(app: AppHandle, state: State<AppState>) -> Result<InitResult> {
-    let mut vault = state.vault.lock().unwrap();
+    let mut vault = recover_lock(&state.vault);
     let v = vault.as_mut().ok_or(AppError::Locked)?;
     let recovery_key = v.rotate_recovery_key()?;
     let workspace_id = v.workspace_id().to_string();
@@ -287,12 +335,12 @@ pub fn rotate_recovery_key(app: AppHandle, state: State<AppState>) -> Result<Ini
 }
 
 fn grant_grace_if_configured(state: &AppState) {
-    let days = state.config.lock().unwrap().grace_days;
+    let days = recover_lock(&state.config).grace_days;
     if days == 0 {
         session::clear();
         return;
     }
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let Some(v) = vault.as_ref() else {
         return;
     };
@@ -303,18 +351,18 @@ fn grant_grace_if_configured(state: &AppState) {
 
 fn load_agent_best_effort(state: &AppState) {
     let env = {
-        let env = state.agent_env.lock().unwrap().clone();
+        let env = recover_lock(&state.agent_env).clone();
         if crate::agent::is_ready(&env) {
             env
         } else if let Ok(started) = crate::agent::ensure() {
-            *state.agent_env.lock().unwrap() = started.clone();
+            *recover_lock(&state.agent_env) = started.clone();
             started
         } else {
             env
         }
     };
     let vault = {
-        let guard = state.vault.lock().unwrap();
+        let guard = recover_lock(&state.vault);
         match guard.as_ref().filter(|v| v.is_unlocked()).cloned() {
             Some(v) => v,
             None => return,
@@ -424,7 +472,7 @@ pub(crate) fn schedule_after_unlock(app: AppHandle) {
 #[tauri::command]
 pub fn set_launch_at_login(state: State<AppState>, enabled: bool) -> Result<()> {
     autostart::set_enabled(enabled)?;
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = recover_lock(&state.config);
     cfg.launch_at_login = enabled;
     cfg.save()
 }
@@ -433,7 +481,7 @@ pub fn set_launch_at_login(state: State<AppState>, enabled: bool) -> Result<()> 
 pub fn set_grace_days(state: State<AppState>, days: u32) -> Result<()> {
     let days = session::clamp_days(days);
     {
-        let mut cfg = state.config.lock().unwrap();
+        let mut cfg = recover_lock(&state.config);
         cfg.grace_days = days;
         cfg.save()?;
     }
@@ -481,7 +529,7 @@ pub fn factory_reset(
     }
 
     let mut steps = Vec::new();
-    let workspace = state.config.lock().unwrap().workspace_path.clone();
+    let workspace = recover_lock(&state.config).workspace_path.clone();
 
     let agent_snapshot = state.agent_env.lock().ok().map(|g| g.clone());
     if let Some(env) = agent_snapshot {
@@ -490,7 +538,7 @@ pub fn factory_reset(
             steps.push("已清空 ssh-agent 中的密钥".into());
         }
     }
-    *state.agent_env.lock().unwrap() = crate::agent::AgentEnv::default();
+    *recover_lock(&state.agent_env) = crate::agent::AgentEnv::default();
 
     match crate::agent::unify::revert() {
         Ok(more) => steps.extend(more),
@@ -516,17 +564,18 @@ pub fn factory_reset(
     }
 
     session::clear();
+    crate::biometric::factory_reset_cleanup();
     let _ = autostart::set_enabled(false);
-    steps.push("已关闭开机自启动并清除免验证会话".into());
+    steps.push("已关闭开机自启动并清除免验证会话与指纹凭据".into());
 
-    *state.vault.lock().unwrap() = None;
+    *recover_lock(&state.vault) = None;
     {
         let mut cfg = crate::app_config::AppConfig::default();
         cfg.ensure_machine_id();
         cfg.save()?;
-        *state.config.lock().unwrap() = cfg;
+        *recover_lock(&state.config) = cfg;
     }
-    state.unlock_guard.lock().unwrap().reset();
+    recover_lock(&state.unlock_guard).reset();
     state.writes_locked.store(false, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut note) = state.startup_note.lock() {
         *note = None;

@@ -1,7 +1,7 @@
 //! M4 命令层：agent 状态/加载/卸载/清空、Git agent 统一环境、解锁后自动加载。
 
 use crate::agent::{self, unify, AgentKeyResolved};
-use crate::commands::AppState;
+use crate::commands::{recover_lock, AppState};
 use crate::error::{AppError, Result};
 use crate::store;
 use serde::Serialize;
@@ -23,7 +23,7 @@ pub struct AgentStatus {
 /// 查询 agent 状态并按指纹反查身份。
 #[tauri::command(async)]
 pub fn agent_status(state: State<'_, AppState>) -> Result<AgentStatus> {
-    let env = state.agent_env.lock().unwrap().clone();
+    let env = recover_lock(&state.agent_env).clone();
     let using_fallback = env.auth_sock.is_some();
     let unify_status = unify::inspect(&env);
     let agent_keys = match agent::list(&env) {
@@ -41,7 +41,7 @@ pub fn agent_status(state: State<'_, AppState>) -> Result<AgentStatus> {
         }
     };
     // 反查需要 vault 数据（若已解锁）。
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let resolved = match vault.as_ref() {
         Some(v) if v.is_unlocked() => {
             let data = store::load_data(v)?;
@@ -77,13 +77,13 @@ pub fn agent_ensure(state: State<'_, AppState>) -> Result<AgentStatus> {
 /// 复用已就绪的 Git agent；否则启动并写回状态。
 fn ready_env(state: &State<AppState>) -> Result<crate::agent::AgentEnv> {
     {
-        let env = state.agent_env.lock().unwrap().clone();
+        let env = recover_lock(&state.agent_env).clone();
         if env.auth_sock.is_some() && agent::is_ready(&env) {
             return Ok(env);
         }
     }
     let env = agent::ensure()?;
-    *state.agent_env.lock().unwrap() = env.clone();
+    *recover_lock(&state.agent_env) = env.clone();
     Ok(env)
 }
 
@@ -98,7 +98,7 @@ pub fn bootstrap_git_agent(app: &AppHandle) {
             match agent::ensure() {
                 Ok(env) => {
                     let state = app.state::<AppState>();
-                    *state.agent_env.lock().unwrap() = env.clone();
+                    *recover_lock(&state.agent_env) = env.clone();
                     log::info!(
                         "Git ssh-agent 已就绪：sock={}",
                         env.auth_sock.as_deref().unwrap_or("-")
@@ -135,7 +135,7 @@ pub fn agent_unify_env(state: State<'_, AppState>, confirmed: bool) -> Result<un
 #[tauri::command(async)]
 pub fn agent_load(state: State<'_, AppState>, key_id: String) -> Result<()> {
     let env = ready_env(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     agent::load_key(v, &env, &key_id)?;
     crate::util::audit(v.root(), &format!("agent 加载密钥 key_id={key_id}"));
@@ -146,7 +146,7 @@ pub fn agent_load(state: State<'_, AppState>, key_id: String) -> Result<()> {
 #[tauri::command(async)]
 pub fn agent_load_identity(state: State<'_, AppState>, identity_id: String) -> Result<()> {
     let env = ready_env(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_data(v)?;
     let identity = data
@@ -166,7 +166,7 @@ pub fn agent_load_identity(state: State<'_, AppState>, identity_id: String) -> R
 #[tauri::command(async)]
 pub fn agent_load_all(state: State<'_, AppState>) -> Result<u32> {
     let env = ready_env(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_data(v)?;
     let mut loaded = 0u32;
@@ -185,7 +185,7 @@ pub fn agent_load_all(state: State<'_, AppState>) -> Result<u32> {
 #[tauri::command(async)]
 pub fn agent_unload(state: State<'_, AppState>, key_id: String) -> Result<()> {
     let env = ready_env(&state)?;
-    let vault = state.vault.lock().unwrap();
+    let vault = recover_lock(&state.vault);
     let v = vault.as_ref().ok_or(AppError::Locked)?;
     let data = store::load_data(v)?;
     let record = data
