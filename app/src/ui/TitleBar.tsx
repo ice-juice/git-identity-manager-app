@@ -45,6 +45,7 @@ export function TitleBar() {
       {/* 左段：品牌，宽度对齐侧边栏 */}
       <div className="tb-brand" data-tauri-drag-region>
         <AppLogo size={26} />
+        {/* 只渲染编译期 APP_NAME。不要去读运行时产品名，否则中文包会变成英文品牌。 */}
         <div className="tb-title">{APP_NAME}</div>
       </div>
 

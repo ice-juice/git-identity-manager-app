@@ -19,8 +19,10 @@ vault.json
 *.dmg
 *.appimage
 
-# 环境
+# 环境（prepare-lang 只写 .env.production；.env 会污染 tauri dev，禁止入库）
 .env
+.env.production
+.env.development
 *.local
 
 # 编辑器 / 系统

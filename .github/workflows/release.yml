@@ -52,6 +52,9 @@ jobs:
           echo "::error::打包与发布只允许在 release 分支，或基于该分支的 v* 标签上执行"
           exit 1
 
+      - name: Check branding and packaging invariants
+        run: node scripts/check-release-invariants.mjs --test
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -211,6 +214,9 @@ jobs:
 
       - name: Prepare language config (${{ matrix.lang }})
         run: node scripts/prepare-lang.mjs ${{ matrix.lang }}
+
+      - name: Verify prepared branding (${{ matrix.lang }})
+        run: node scripts/check-release-invariants.mjs --prepared ${{ matrix.lang }}
 
       - uses: tauri-apps/tauri-action@v0
         id: tauri

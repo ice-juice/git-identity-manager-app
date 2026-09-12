@@ -4,9 +4,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { INSTALLER_STEM as BRAND } from "./brand.mjs";
 
 const LOCALES = ["zh-CN", "en-US"];
-const BRAND = "Git.Keymaster";
 
 const COMPOUND_SUFFIXES = [
   ".app.tar.gz.sig",

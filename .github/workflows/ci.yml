@@ -1,4 +1,4 @@
-# 推 dev / release 时只跑跨平台 cargo test，约 3–6 分钟出结论。
+# 推 dev / release 时先跑品牌/打包不变量，再跑跨平台 cargo test，约 3–6 分钟出结论。
 # 不要在这里打包。打 v* 标签后的出包见 release.yml。
 name: Test
 
@@ -12,6 +12,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  invariants:
+    name: release invariants
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check branding and packaging invariants
+        run: node scripts/check-release-invariants.mjs --test
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

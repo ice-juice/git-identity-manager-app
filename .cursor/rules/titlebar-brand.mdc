@@ -1,0 +1,14 @@
+---
+description: 左上角品牌名只渲染编译期 APP_NAME，禁止 getName()
+globs: app/src/ui/TitleBar.tsx,app/src/lib/config.ts,app/src/ui/MobileShell.tsx,app/vite.config.ts
+alwaysApply: false
+---
+
+# 标题栏品牌名
+
+Windows 左上角是自绘 `TitleBar`，不是系统标题，也不是 `CFBundleName`。
+
+- 只渲染 `{APP_NAME}`。
+- 禁止 `import { getName } from "@tauri-apps/api/app"`。
+- `APP_NAME` 来自 `vite.config.ts` 按 `scripts/brand.mjs` 注入的 `VITE_APP_NAME`。
+- 不要为了「跟系统窗口名同步」再去读 `productName`。那会让中文界面重新显示 Git Keymaster。
